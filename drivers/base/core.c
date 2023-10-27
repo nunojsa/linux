@@ -496,6 +496,30 @@ static struct attribute *devlink_attrs[] = {
 };
 ATTRIBUTE_GROUPS(devlink);
 
+static void device_node_overlay_mark_async(struct device *dev)
+{
+	if (!dev_of_node(dev))
+		return;
+	if (!of_node_check_flag(dev->of_node, OF_DETACHED))
+		return;
+	if (of_node_check_flag(dev->of_node, OF_OVERLAY))
+		return;
+
+	kobject_mark_async_put(&dev->of_node->kobj, system_long_wq);
+}
+
+static void device_node_overlay_relax_async(struct device *dev)
+{
+	if (!dev_of_node(dev))
+		return;
+	if (!of_node_check_flag(dev->of_node, OF_DETACHED))
+		return;
+	if (of_node_check_flag(dev->of_node, OF_OVERLAY))
+		return;
+
+	kobject_relax_async_put(&dev->of_node->kobj);
+}
+
 static void device_link_release_fn(struct work_struct *work)
 {
 	struct device_link *link = container_of(work, struct device_link, rm_work);
@@ -516,6 +540,8 @@ static void device_link_release_fn(struct work_struct *work)
 
 	pm_request_idle(link->supplier);
 
+	device_node_overlay_relax_async(link->consumer);
+	device_node_overlay_relax_async(link->supplier);
 	put_device(link->consumer);
 	put_device(link->supplier);
 	kfree(link);
@@ -526,12 +552,20 @@ static void devlink_dev_release(struct device *dev)
 	struct device_link *link = to_devlink(dev);
 
 	INIT_WORK(&link->rm_work, device_link_release_fn);
+
+	device_node_overlay_mark_async(link->consumer);
+	device_node_overlay_mark_async(link->supplier);
 	/*
 	 * It may take a while to complete this work because of the SRCU
 	 * synchronization in device_link_release_fn() and if the consumer or
 	 * supplier devices get deleted when it runs, so put it into the "long"
 	 * workqueue.
 	 */
+
+	//if (device_node_overlay_removal(link->consumer) ||
+	//    device_node_overlay_removal(link->supplier))
+	//	device_link_release_fn(&link->rm_work);
+	//else
 	queue_work(system_long_wq, &link->rm_work);
 }
 
