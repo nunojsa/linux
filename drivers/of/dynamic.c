@@ -14,6 +14,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/proc_fs.h>
+#include <linux/workqueue.h>
 
 #include "of_private.h"
 
@@ -519,6 +520,10 @@ static void __of_changeset_entry_destroy(struct of_changeset_entry *ce)
 {
 	if (ce->action == OF_RECONFIG_ATTACH_NODE &&
 	    of_node_check_flag(ce->np, OF_OVERLAY)) {
+		/*
+		 * wait for possible async kref releases...
+		 */
+		flush_work(&ce->np->kobj.async_wait_put);
 		if (kref_read(&ce->np->kobj.kref) > 1) {
 			pr_err("ERROR: memory leak, expected refcount 1 instead of %d, of_node_get()/of_node_put() unbalanced - destroy cset entry: attach overlay node %pOF\n",
 			       kref_read(&ce->np->kobj.kref), ce->np);
