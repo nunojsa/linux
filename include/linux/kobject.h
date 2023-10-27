@@ -69,12 +69,15 @@ struct kobject {
 	const struct kobj_type	*ktype;
 	struct kernfs_node	*sd; /* sysfs directory entry */
 	struct kref		kref;
-
+	struct work_struct      async_wait_put;
+	wait_queue_head_t       put_wait_queue;
 	unsigned int state_initialized:1;
 	unsigned int state_in_sysfs:1;
 	unsigned int state_add_uevent_sent:1;
 	unsigned int state_remove_uevent_sent:1;
 	unsigned int uevent_suppress:1;
+	unsigned int async_put_cnt;
+	bool async_wait;
 
 #ifdef CONFIG_DEBUG_KOBJECT_RELEASE
 	struct delayed_work	release;
@@ -197,6 +200,10 @@ static inline const struct kobj_type *get_ktype(const struct kobject *kobj)
 {
 	return kobj->ktype;
 }
+
+void kobject_mark_async_put(struct kobject *kobj,
+			    struct workqueue_struct *queue);
+void kobject_relax_async_put(struct kobject *kobj);
 
 struct kobject *kset_find_obj(struct kset *, const char *);
 

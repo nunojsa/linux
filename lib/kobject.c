@@ -192,18 +192,61 @@ static void kobj_kset_leave(struct kobject *kobj)
 	kset_put(kobj->kset);
 }
 
+static void kobj_async_wait_kref_put(struct work_struct *work)
+{
+	struct kobject *kobj = container_of(work, struct kobject,
+					    async_wait_put);
+	DEFINE_WAIT(wait);
+
+	for (;;) {
+		prepare_to_wait(&kobj->put_wait_queue, &wait,
+				TASK_UNINTERRUPTIBLE);
+		if (!READ_ONCE(kobj->async_wait))
+			break;
+		schedule_timeout(msecs_to_jiffies(100));
+	}
+
+	finish_wait(&kobj->put_wait_queue, &wait);
+	kobject_put(kobj);
+}
+
 static void kobject_init_internal(struct kobject *kobj)
 {
 	if (!kobj)
 		return;
 	kref_init(&kobj->kref);
 	INIT_LIST_HEAD(&kobj->entry);
+	INIT_WORK(&kobj->async_wait_put, kobj_async_wait_kref_put);
+	init_waitqueue_head(&kobj->put_wait_queue);
 	kobj->state_in_sysfs = 0;
 	kobj->state_add_uevent_sent = 0;
 	kobj->state_remove_uevent_sent = 0;
 	kobj->state_initialized = 1;
+	kobj->async_wait = false;
 }
 
+static DEFINE_SPINLOCK(kobj_async_put_lock);
+
+void kobject_relax_async_put(struct kobject *kobj)
+{
+	spin_lock(&kobj_async_put_lock);
+	kobj->async_put_cnt--;
+	spin_unlock(&kobj_async_put_lock);
+}
+EXPORT_SYMBOL_GPL(kobject_relax_async_put);
+
+void kobject_mark_async_put(struct kobject *kobj,
+			    struct workqueue_struct *queue)
+{
+	spin_lock(&kobj_async_put_lock);
+	if (!kobj->async_put_cnt) {
+		kobj->async_wait = true;
+		queue_work(queue, &kobj->async_wait_put);
+	}
+	kobj->async_put_cnt++;
+	spin_unlock(&kobj_async_put_lock);
+}
+EXPORT_SYMBOL_GPL(kobject_mark_async_put);
 
 static int kobject_add_internal(struct kobject *kobj)
 {
@@ -730,6 +773,15 @@ void kobject_put(struct kobject *kobj)
 			WARN(1, KERN_WARNING
 				"kobject: '%s' (%p): is not initialized, yet kobject_put() is being called.\n",
 			     kobject_name(kobj), kobj);
+		if (unlikely(kobj->async_wait)) {
+			if (!kobj->async_put_cnt) {
+				WRITE_ONCE(kobj->async_wait, false);
+				pr_debug("'%s' wake up\n", kobject_name(kobj));
+				wake_up(&kobj->put_wait_queue);
+				return;
+			}
+		}
+
 		kref_put(&kobj->kref, kobject_release);
 	}
 }
