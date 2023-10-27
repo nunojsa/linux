@@ -1,0 +1,23 @@
+/dts-v1/;
+/plugin/;
+
+&{/} {
+        vcc: fixedregulator@1 {
+                compatible = "regulator-fixed";
+                regulator-name = "vcc-supply";
+                regulator-min-microvolt = <5000000>;
+                regulator-max-microvolt = <5000000>;
+        };
+};
+
+&amba {
+        #address-cells = <1>;
+	#size-cells = <1>;
+
+        link_removal@f8007120 {
+                compatible = "adi,foo";
+                reg = <0xf8007120 0x20>;
+
+                vcc-supply = <&vcc>;
+        };
+};

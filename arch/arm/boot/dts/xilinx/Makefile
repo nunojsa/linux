@@ -14,4 +14,7 @@ dtb-$(CONFIG_ARCH_ZYNQ) += \
 	zynq-zturn.dtb \
 	zynq-zturn-v5.dtb \
 	zynq-zybo.dtb \
+	zed-link.dtb \
 	zynq-zybo-z7.dtb
+
+zed-link-dtbs := zynq-zed.dtb zed-link.dtbo 
