@@ -10,6 +10,7 @@
 #include <linux/device.h>
 #include <linux/cdev.h>
 #include <linux/cleanup.h>
+#include <linux/math.h>
 #include <linux/slab.h>
 #include <linux/iio/types.h>
 /* IIO TODO LIST */
@@ -799,8 +800,8 @@ int iio_str_to_fixpoint(const char *str, int fract_mult, int *integer,
  *
  * Returns the given value converted from degree to rad
  */
-#define IIO_DEGREE_TO_RAD(deg) (((deg) * 314159ULL + 9000000ULL) / 18000000ULL)
-
+#define IIO_DEGREE_TO_RAD(deg) \
+	DIV_ROUND_CLOSEST_ULL((deg) * 314159ULL, 18000000)
 /**
  * IIO_RAD_TO_DEGREE() - Convert rad to degree
  * @rad: A value in rad
@@ -808,7 +809,7 @@ int iio_str_to_fixpoint(const char *str, int fract_mult, int *integer,
  * Returns the given value converted from rad to degree
  */
 #define IIO_RAD_TO_DEGREE(rad) \
-	(((rad) * 18000000ULL + 314159ULL / 2) / 314159ULL)
+	DIV_ROUND_CLOSEST_ULL((rad) * 18000000ULL + 314159)
 
 /**
  * IIO_G_TO_M_S_2() - Convert g to meter / second**2
@@ -824,6 +825,6 @@ int iio_str_to_fixpoint(const char *str, int fract_mult, int *integer,
  *
  * Returns the given value converted from meter / second**2 to g
  */
-#define IIO_M_S_2_TO_G(ms2) (((ms2) * 100000ULL + 980665ULL / 2) / 980665ULL)
+#define IIO_M_S_2_TO_G(ms2) DIV_ROUND_CLOSEST_ULL((ms2) * 100000ULL, 980665)
 
 #endif /* _INDUSTRIAL_IO_H_ */
