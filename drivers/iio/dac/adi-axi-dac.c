@@ -6,6 +6,7 @@
  * Copyright 2016-2024 Analog Devices Inc.
  */
 
+#include <linux/bitfield.h>
 #include <linux/clk.h>
 #include <linux/device.h>
 #include <linux/module.h>
@@ -31,6 +32,15 @@
 #define   AXI_REG_RSTN_CE_N		BIT(2)
 #define   AXI_REG_RSTN_MMCM_RSTN	BIT(1)
 #define   AXI_REG_RSTN_RSTN		BIT(0)
+
+/* DAC Channel controls */
+#define AXI_REG_CHAN_CNTRL_7(c)		(0x0418 + (c) * 0x40)
+#define   AXI_DAC_DATA_SEL_MASK		GENMASK(3, 0)
+
+enum {
+	AXI_DAC_DATA_INTERNAL_TONE,
+	AXI_DAC_DATA_DMA = 2,
+};
 
 struct axi_dac_state {
 	struct regmap *regmap;
@@ -58,16 +68,110 @@ static void axi_dac_disable(struct iio_backend *back)
 	regmap_write(st->regmap, AXI_REG_RSTN, 0);
 }
 
+static struct iio_buffer *axi_dac_request_buffer(struct iio_backend *back,
+						 struct iio_dev *indio_dev)
+{
+	struct axi_dac_state *st = iio_backend_get_priv(back);
+	struct iio_buffer *buffer;
+	const char *dma_name;
+	int ret;
+
+	if (device_property_read_string(st->dev, "dma-names", &dma_name))
+		dma_name = "tx";
+
+	buffer = iio_dmaengine_buffer_alloc(st->dev, dma_name);
+	if (IS_ERR(buffer)) {
+		dev_err(st->dev, "Could not get DMA buffer, %ld\n",
+			PTR_ERR(buffer));
+		return ERR_CAST(buffer);
+	}
+
+	indio_dev->modes |= INDIO_BUFFER_HARDWARE;
+	iio_buffer_set_dir(buffer, IIO_BUFFER_DIRECTION_OUT);
+
+	ret = iio_device_attach_buffer(indio_dev, buffer);
+	if (ret)
+		return ERR_PTR(ret);
+
+	return buffer;
+}
+
+static void axi_dac_free_buffer(struct iio_backend *back,
+				struct iio_buffer *buffer)
+{
+	iio_dmaengine_buffer_free(buffer);
+}
+
+static int ad9739a_read_raw(struct iio_backend *back,
+			    struct iio_chan_spec const *chan,
+			    int *val, int *val2, long mask)
+{
+	struct axi_dac_state *st = iio_backend_get_priv(back);
+
+	switch (mask) {
+	case IIO_CHAN_INFO_SCALE:
+		return 0;
+	case IIO_CHAN_INFO_FREQUENCY:
+		return 0;
+	case IIO_CHAN_INFO_PHASE:
+		return 0;
+	default:
+		return -EINVAL;
+	};
+}
+
+static int ad9739a_write_raw(struct iio_backend *back,
+			     struct iio_chan_spec const *chan,
+			     int val, int val2, long mask)
+{
+	struct axi_dac_state *st = iio_backend_get_priv(back);
+
+	switch (mask) {
+	case IIO_CHAN_INFO_SCALE:
+		return 0;
+	case IIO_CHAN_INFO_FREQUENCY:
+		return 0;
+	case IIO_CHAN_INFO_PHASE:
+		return 0;
+	default:
+		return -EINVAL;
+	};
+}
+
+static int axi_dac_data_source_set(struct iio_backend *back, unsigned int chan,
+				   enum iio_backend_data_source data)
+{
+	struct axi_dac_state *st = iio_backend_get_priv(back);
+
+	switch (data) {
+	case IIO_BACKEND_INTERNAL_CW:
+		return regmap_update_bits(st->regmap, AXI_REG_CHAN_CNTRL_7(chan),
+					  AXI_DAC_DATA_SEL_MASK,
+					  AXI_DAC_DATA_INTERNAL_TONE);
+	case IIO_BACKEND_EXTERNAL:
+		return regmap_update_bits(st->regmap, AXI_REG_CHAN_CNTRL_7(chan),
+					  AXI_DAC_DATA_SEL_MASK,
+					  AXI_DAC_DATA_DMA);
+	default:
+		return -EINVAL;
+	}
+}
+
+static const struct iio_backend_ops axi_dac_generic = {
+	.enable = axi_dac_enable,
+	.disable = axi_dac_disable,
+	.request_buffer = axi_dac_request_buffer,
+	.free_buffer = axi_dac_free_buffer,
+	.read_raw = axi_dac_read_raw,
+	.write_raw = axi_dac_write_raw,
+	.data_source_set = axi_dac_data_source_set,
+};
+
 static const struct regmap_config axi_dac_regmap_config = {
 	.val_bits = 32,
 	.reg_bits = 32,
 	.reg_stride = 4,
 	.max_register = 0x0800,
-};
-
-static const struct iio_backend_ops axi_dac_generic = {
-	.enable = axi_dac_enable,
-	.disable = axi_dac_disable,
 };
 
 static int axi_dac_probe(struct platform_device *pdev)
@@ -111,6 +215,18 @@ static int axi_dac_probe(struct platform_device *pdev)
 	ret = regmap_read(st->regmap, ADI_AXI_REG_VERSION, &ver);
 	if (ret)
 		return ret;
+
+	if (ADI_AXI_PCORE_VER_MAJOR(ver) != ADI_AXI_PCORE_VER_MAJOR(*expected_ver)) {
+		dev_err(&pdev->dev,
+			"Major version mismatch. Expected %d.%.2d.%c, Reported %d.%.2d.%c\n",
+			ADI_AXI_PCORE_VER_MAJOR(*expected_ver),
+			ADI_AXI_PCORE_VER_MINOR(*expected_ver),
+			ADI_AXI_PCORE_VER_PATCH(*expected_ver),
+			ADI_AXI_PCORE_VER_MAJOR(ver),
+			ADI_AXI_PCORE_VER_MINOR(ver),
+			ADI_AXI_PCORE_VER_PATCH(ver));
+		return -ENODEV;
+	}
 
 	ret = devm_iio_backend_register(&pdev->dev, &axi_dac_generic, st);
 	if (ret)
