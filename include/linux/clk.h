@@ -9,6 +9,7 @@
 #ifndef __LINUX_CLK_H
 #define __LINUX_CLK_H
 
+#include <linux/clk-types.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/notifier.h>
@@ -70,8 +71,8 @@ struct clk_notifier {
  */
 struct clk_notifier_data {
 	struct clk		*clk;
-	unsigned long		old_rate;
-	unsigned long		new_rate;
+	clk_rate_t		old_rate;
+	clk_rate_t		new_rate;
 };
 
 /**
@@ -687,7 +688,7 @@ void clk_bulk_disable(int num_clks, const struct clk_bulk_data *clks);
  *		  This is only valid once the clock source has been enabled.
  * @clk: clock source
  */
-unsigned long clk_get_rate(struct clk *clk);
+clk_rate_t clk_get_rate(struct clk *clk);
 
 /**
  * clk_put	- "free" the clock source
@@ -766,7 +767,7 @@ void devm_clk_put(struct device *dev, struct clk *clk);
  *
  * Returns rounded clock rate in Hz, or negative errno.
  */
-long clk_round_rate(struct clk *clk, unsigned long rate);
+long clk_round_rate(struct clk *clk, clk_rate_t rate);
 
 /**
  * clk_set_rate - set the clock rate for a clock source
@@ -778,7 +779,7 @@ long clk_round_rate(struct clk *clk, unsigned long rate);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_rate(struct clk *clk, unsigned long rate);
+int clk_set_rate(struct clk *clk, clk_rate_t rate);
 
 /**
  * clk_set_rate_exclusive- set the clock rate and claim exclusivity over
@@ -795,7 +796,7 @@ int clk_set_rate(struct clk *clk, unsigned long rate);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_rate_exclusive(struct clk *clk, unsigned long rate);
+int clk_set_rate_exclusive(struct clk *clk, clk_rate_t rate);
 
 /**
  * clk_has_parent - check if a clock is a possible parent for another
@@ -817,7 +818,7 @@ bool clk_has_parent(const struct clk *clk, const struct clk *parent);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max);
+int clk_set_rate_range(struct clk *clk, clk_rate_t min, clk_rate_t max);
 
 /**
  * clk_set_min_rate - set a minimum clock rate for a clock source
@@ -826,7 +827,7 @@ int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_min_rate(struct clk *clk, unsigned long rate);
+int clk_set_min_rate(struct clk *clk, clk_rate_t rate);
 
 /**
  * clk_set_max_rate - set a maximum clock rate for a clock source
@@ -835,7 +836,7 @@ int clk_set_min_rate(struct clk *clk, unsigned long rate);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_max_rate(struct clk *clk, unsigned long rate);
+int clk_set_max_rate(struct clk *clk, clk_rate_t rate);
 
 /**
  * clk_set_parent - set the parent clock source for this clock
@@ -999,22 +1000,22 @@ static inline void clk_disable(struct clk *clk) {}
 static inline void clk_bulk_disable(int num_clks,
 				    const struct clk_bulk_data *clks) {}
 
-static inline unsigned long clk_get_rate(struct clk *clk)
+static inline clk_rate_t clk_get_rate(struct clk *clk)
 {
 	return 0;
 }
 
-static inline int clk_set_rate(struct clk *clk, unsigned long rate)
+static inline int clk_set_rate(struct clk *clk, clk_rate_t rate)
 {
 	return 0;
 }
 
-static inline int clk_set_rate_exclusive(struct clk *clk, unsigned long rate)
+static inline int clk_set_rate_exclusive(struct clk *clk, clk_rate_t rate)
 {
 	return 0;
 }
 
-static inline long clk_round_rate(struct clk *clk, unsigned long rate)
+static inline long clk_round_rate(struct clk *clk, clk_rate_t rate)
 {
 	return 0;
 }
@@ -1024,18 +1025,18 @@ static inline bool clk_has_parent(struct clk *clk, struct clk *parent)
 	return true;
 }
 
-static inline int clk_set_rate_range(struct clk *clk, unsigned long min,
-				     unsigned long max)
+static inline int clk_set_rate_range(struct clk *clk, clk_rate_t min,
+				     clk_rate_t max)
 {
 	return 0;
 }
 
-static inline int clk_set_min_rate(struct clk *clk, unsigned long rate)
+static inline int clk_set_min_rate(struct clk *clk, clk_rate_t rate)
 {
 	return 0;
 }
 
-static inline int clk_set_max_rate(struct clk *clk, unsigned long rate)
+static inline int clk_set_max_rate(struct clk *clk, clk_rate_t rate)
 {
 	return 0;
 }

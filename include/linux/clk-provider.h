@@ -6,6 +6,7 @@
 #ifndef __LINUX_CLK_PROVIDER_H
 #define __LINUX_CLK_PROVIDER_H
 
+#include <linux/clk-types.h>
 #include <linux/of.h>
 #include <linux/of_clk.h>
 
@@ -57,21 +58,21 @@ struct dentry;
  */
 struct clk_rate_request {
 	struct clk_core *core;
-	unsigned long rate;
-	unsigned long min_rate;
-	unsigned long max_rate;
-	unsigned long best_parent_rate;
+	clk_rate_t rate;
+	clk_rate_t min_rate;
+	clk_rate_t max_rate;
+	clk_rate_t best_parent_rate;
 	struct clk_hw *best_parent_hw;
 };
 
 void clk_hw_init_rate_request(const struct clk_hw *hw,
 			      struct clk_rate_request *req,
-			      unsigned long rate);
+			      clk_rate_t rate);
 void clk_hw_forward_rate_request(const struct clk_hw *core,
 				 const struct clk_rate_request *old_req,
 				 const struct clk_hw *parent,
 				 struct clk_rate_request *req,
-				 unsigned long parent_rate);
+				 clk_rate_t parent_rate);
 
 /**
  * struct clk_duty - Structure encoding the duty cycle ratio of a clock
@@ -242,19 +243,19 @@ struct clk_ops {
 	void		(*disable_unused)(struct clk_hw *hw);
 	int		(*save_context)(struct clk_hw *hw);
 	void		(*restore_context)(struct clk_hw *hw);
-	unsigned long	(*recalc_rate)(struct clk_hw *hw,
-					unsigned long parent_rate);
-	long		(*round_rate)(struct clk_hw *hw, unsigned long rate,
-					unsigned long *parent_rate);
+	clk_rate_t	(*recalc_rate)(struct clk_hw *hw,
+				       clk_rate_t parent_rate);
+	long		(*round_rate)(struct clk_hw *hw, clk_rate_t rate,
+				      clk_rate_t *parent_rate);
 	int		(*determine_rate)(struct clk_hw *hw,
 					  struct clk_rate_request *req);
 	int		(*set_parent)(struct clk_hw *hw, u8 index);
 	u8		(*get_parent)(struct clk_hw *hw);
-	int		(*set_rate)(struct clk_hw *hw, unsigned long rate,
-				    unsigned long parent_rate);
+	int		(*set_rate)(struct clk_hw *hw, clk_rate_t rate,
+				    clk_rate_t parent_rate);
 	int		(*set_rate_and_parent)(struct clk_hw *hw,
-				    unsigned long rate,
-				    unsigned long parent_rate, u8 index);
+					       clk_rate_t rate,
+					       clk_rate_t parent_rate, u8 index);
 	unsigned long	(*recalc_accuracy)(struct clk_hw *hw,
 					   unsigned long parent_accuracy);
 	int		(*get_phase)(struct clk_hw *hw);
@@ -351,7 +352,7 @@ struct clk_hw {
  */
 struct clk_fixed_rate {
 	struct		clk_hw hw;
-	unsigned long	fixed_rate;
+	clk_rate_t	fixed_rate;
 	unsigned long	fixed_accuracy;
 	unsigned long	flags;
 };
@@ -363,11 +364,11 @@ struct clk_hw *__clk_hw_register_fixed_rate(struct device *dev,
 		struct device_node *np, const char *name,
 		const char *parent_name, const struct clk_hw *parent_hw,
 		const struct clk_parent_data *parent_data, unsigned long flags,
-		unsigned long fixed_rate, unsigned long fixed_accuracy,
+		clk_rate_t fixed_rate, unsigned long fixed_accuracy,
 		unsigned long clk_fixed_flags, bool devm);
 struct clk *clk_register_fixed_rate(struct device *dev, const char *name,
 		const char *parent_name, unsigned long flags,
-		unsigned long fixed_rate);
+		clk_rate_t fixed_rate);
 /**
  * clk_hw_register_fixed_rate - register fixed-rate clock with the clock
  * framework
@@ -701,15 +702,15 @@ struct clk_divider {
 extern const struct clk_ops clk_divider_ops;
 extern const struct clk_ops clk_divider_ro_ops;
 
-unsigned long divider_recalc_rate(struct clk_hw *hw, unsigned long parent_rate,
+clk_rate_t divider_recalc_rate(struct clk_hw *hw, clk_rate_t parent_rate,
 		unsigned int val, const struct clk_div_table *table,
 		unsigned long flags, unsigned long width);
 long divider_round_rate_parent(struct clk_hw *hw, struct clk_hw *parent,
-			       unsigned long rate, unsigned long *prate,
+			       clk_rate_t rate, clk_rate_t *prate,
 			       const struct clk_div_table *table,
 			       u8 width, unsigned long flags);
 long divider_ro_round_rate_parent(struct clk_hw *hw, struct clk_hw *parent,
-				  unsigned long rate, unsigned long *prate,
+				  clk_rate_t rate, clk_rate_t *prate,
 				  const struct clk_div_table *table, u8 width,
 				  unsigned long flags, unsigned int val);
 int divider_determine_rate(struct clk_hw *hw, struct clk_rate_request *req,
@@ -718,7 +719,7 @@ int divider_determine_rate(struct clk_hw *hw, struct clk_rate_request *req,
 int divider_ro_determine_rate(struct clk_hw *hw, struct clk_rate_request *req,
 			      const struct clk_div_table *table, u8 width,
 			      unsigned long flags, unsigned int val);
-int divider_get_val(unsigned long rate, unsigned long parent_rate,
+int divider_get_val(clk_rate_t rate, clk_rate_t parent_rate,
 		const struct clk_div_table *table, u8 width,
 		unsigned long flags);
 
@@ -1159,8 +1160,8 @@ struct clk_fractional_divider {
 	u8		nwidth;
 	u8		flags;
 	void		(*approximation)(struct clk_hw *hw,
-				unsigned long rate, unsigned long *parent_rate,
-				unsigned long *m, unsigned long *n);
+				clk_rate_t rate, clk_rate_t *parent_rate,
+				clk_rate_t *m, clk_rate_t *n);
 	spinlock_t	*lock;
 };
 
@@ -1316,7 +1317,7 @@ struct clk_hw *clk_hw_get_parent_by_index(const struct clk_hw *hw,
 int clk_hw_get_parent_index(struct clk_hw *hw);
 int clk_hw_set_parent(struct clk_hw *hw, struct clk_hw *new_parent);
 unsigned int __clk_get_enable_count(struct clk *clk);
-unsigned long clk_hw_get_rate(const struct clk_hw *hw);
+clk_rate_t clk_hw_get_rate(const struct clk_hw *hw);
 unsigned long clk_hw_get_flags(const struct clk_hw *hw);
 #define clk_hw_can_set_rate_parent(hw) \
 	(clk_hw_get_flags((hw)) & CLK_SET_RATE_PARENT)
@@ -1337,10 +1338,10 @@ int clk_mux_determine_rate_flags(struct clk_hw *hw,
 int clk_hw_determine_rate_no_reparent(struct clk_hw *hw,
 				      struct clk_rate_request *req);
 void clk_hw_reparent(struct clk_hw *hw, struct clk_hw *new_parent);
-void clk_hw_get_rate_range(struct clk_hw *hw, unsigned long *min_rate,
-			   unsigned long *max_rate);
-void clk_hw_set_rate_range(struct clk_hw *hw, unsigned long min_rate,
-			   unsigned long max_rate);
+void clk_hw_get_rate_range(struct clk_hw *hw, clk_rate_t *min_rate,
+			   clk_rate_t *max_rate);
+void clk_hw_set_rate_range(struct clk_hw *hw, clk_rate_t min_rate,
+			   clk_rate_t max_rate);
 
 static inline void __clk_hw_set_clk(struct clk_hw *dst, struct clk_hw *src)
 {
@@ -1348,8 +1349,8 @@ static inline void __clk_hw_set_clk(struct clk_hw *dst, struct clk_hw *src)
 	dst->core = src->core;
 }
 
-static inline long divider_round_rate(struct clk_hw *hw, unsigned long rate,
-				      unsigned long *prate,
+static inline long divider_round_rate(struct clk_hw *hw, clk_rate_t rate,
+				      clk_rate_t *prate,
 				      const struct clk_div_table *table,
 				      u8 width, unsigned long flags)
 {
@@ -1357,8 +1358,8 @@ static inline long divider_round_rate(struct clk_hw *hw, unsigned long rate,
 					 rate, prate, table, width, flags);
 }
 
-static inline long divider_ro_round_rate(struct clk_hw *hw, unsigned long rate,
-					 unsigned long *prate,
+static inline long divider_ro_round_rate(struct clk_hw *hw, clk_rate_t rate,
+					 clk_rate_t *prate,
 					 const struct clk_div_table *table,
 					 u8 width, unsigned long flags,
 					 unsigned int val)
@@ -1371,7 +1372,7 @@ static inline long divider_ro_round_rate(struct clk_hw *hw, unsigned long rate,
 /*
  * FIXME clock api without lock protection
  */
-unsigned long clk_hw_round_rate(struct clk_hw *hw, unsigned long rate);
+clk_rate_t clk_hw_round_rate(struct clk_hw *hw, clk_rate_t rate);
 
 struct clk_onecell_data {
 	struct clk **clks;

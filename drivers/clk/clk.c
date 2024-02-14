@@ -64,9 +64,9 @@ struct clk_core {
 	struct clk_parent_map	*parents;
 	u8			num_parents;
 	u8			new_parent_index;
-	unsigned long		rate;
-	unsigned long		req_rate;
-	unsigned long		new_rate;
+	clk_rate_t		rate;
+	clk_rate_t		req_rate;
+	clk_rate_t		new_rate;
 	struct clk_core		*new_parent;
 	struct clk_core		*new_child;
 	unsigned long		flags;
@@ -75,8 +75,8 @@ struct clk_core {
 	unsigned int		enable_count;
 	unsigned int		prepare_count;
 	unsigned int		protect_count;
-	unsigned long		min_rate;
-	unsigned long		max_rate;
+	clk_rate_t		min_rate;
+	clk_rate_t		max_rate;
 	unsigned long		accuracy;
 	int			phase;
 	struct clk_duty		duty;
@@ -99,8 +99,8 @@ struct clk {
 	struct device *dev;
 	const char *dev_id;
 	const char *con_id;
-	unsigned long min_rate;
-	unsigned long max_rate;
+	clk_rate_t min_rate;
+	clk_rate_t max_rate;
 	unsigned int exclusive_count;
 	struct hlist_node clks_node;
 };
@@ -475,7 +475,7 @@ unsigned int __clk_get_enable_count(struct clk *clk)
 	return !clk ? 0 : clk->core->enable_count;
 }
 
-static unsigned long clk_core_get_rate_nolock(struct clk_core *core)
+static clk_rate_t clk_core_get_rate_nolock(struct clk_core *core)
 {
 	if (!core)
 		return 0;
@@ -491,7 +491,7 @@ static unsigned long clk_core_get_rate_nolock(struct clk_core *core)
 	return 0;
 }
 
-unsigned long clk_hw_get_rate(const struct clk_hw *hw)
+clk_rate_t clk_hw_get_rate(const struct clk_hw *hw)
 {
 	return clk_core_get_rate_nolock(hw->core);
 }
@@ -538,8 +538,8 @@ bool __clk_is_enabled(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(__clk_is_enabled);
 
-static bool mux_is_better_rate(unsigned long rate, unsigned long now,
-			   unsigned long best, unsigned long flags)
+static bool mux_is_better_rate(clk_rate_t rate, clk_rate_t now,
+			       clk_rate_t best, unsigned long flags)
 {
 	if (flags & CLK_MUX_ROUND_CLOSEST)
 		return abs(now - rate) < abs(best - rate);
@@ -549,7 +549,7 @@ static bool mux_is_better_rate(unsigned long rate, unsigned long now,
 
 static void clk_core_init_rate_req(struct clk_core * const core,
 				   struct clk_rate_request *req,
-				   unsigned long rate);
+				   clk_rate_t rate);
 
 static int clk_core_round_rate_nolock(struct clk_core *core,
 				      struct clk_rate_request *req);
@@ -580,7 +580,7 @@ clk_core_forward_rate_req(struct clk_core *core,
 			  const struct clk_rate_request *old_req,
 			  struct clk_core *parent,
 			  struct clk_rate_request *req,
-			  unsigned long parent_rate)
+			  clk_rate_t parent_rate)
 {
 	if (WARN_ON(!clk_core_has_parent(core, parent)))
 		return;
@@ -600,7 +600,7 @@ clk_core_determine_rate_no_reparent(struct clk_hw *hw,
 {
 	struct clk_core *core = hw->core;
 	struct clk_core *parent = core->parent;
-	unsigned long best;
+	clk_rate_t best;
 	int ret;
 
 	if (core->flags & CLK_SET_RATE_PARENT) {
@@ -641,7 +641,7 @@ int clk_mux_determine_rate_flags(struct clk_hw *hw,
 {
 	struct clk_core *core = hw->core, *parent, *best_parent = NULL;
 	int i, num_parents, ret;
-	unsigned long best = 0;
+	clk_rate_t best = 0;
 
 	/* if NO_REPARENT flag set, pass through to current parent */
 	if (core->flags & CLK_SET_RATE_NO_REPARENT)
@@ -650,7 +650,7 @@ int clk_mux_determine_rate_flags(struct clk_hw *hw,
 	/* find the parent that can provide the fastest rate <= rate */
 	num_parents = core->num_parents;
 	for (i = 0; i < num_parents; i++) {
-		unsigned long parent_rate;
+		clk_rate_t parent_rate;
 
 		parent = clk_core_get_parent_by_index(core, i);
 		if (!parent)
@@ -700,8 +700,8 @@ struct clk *__clk_lookup(const char *name)
 }
 
 static void clk_core_get_boundaries(struct clk_core *core,
-				    unsigned long *min_rate,
-				    unsigned long *max_rate)
+				    clk_rate_t *min_rate,
+				    clk_rate_t *max_rate)
 {
 	struct clk *clk_user;
 
@@ -726,16 +726,16 @@ static void clk_core_get_boundaries(struct clk_core *core,
  * Fills the @min_rate and @max_rate variables with the minimum and
  * maximum that clock can reach.
  */
-void clk_hw_get_rate_range(struct clk_hw *hw, unsigned long *min_rate,
-			   unsigned long *max_rate)
+void clk_hw_get_rate_range(struct clk_hw *hw, clk_rate_t *min_rate,
+			   clk_rate_t *max_rate)
 {
 	clk_core_get_boundaries(hw->core, min_rate, max_rate);
 }
 EXPORT_SYMBOL_GPL(clk_hw_get_rate_range);
 
 static bool clk_core_check_boundaries(struct clk_core *core,
-				      unsigned long min_rate,
-				      unsigned long max_rate)
+				      clk_rate_t min_rate,
+				      clk_rate_t max_rate)
 {
 	struct clk *user;
 
@@ -751,8 +751,8 @@ static bool clk_core_check_boundaries(struct clk_core *core,
 	return true;
 }
 
-void clk_hw_set_rate_range(struct clk_hw *hw, unsigned long min_rate,
-			   unsigned long max_rate)
+void clk_hw_set_rate_range(struct clk_hw *hw, clk_rate_t min_rate,
+			   clk_rate_t max_rate)
 {
 	hw->core->min_rate = min_rate;
 	hw->core->max_rate = max_rate;
@@ -1509,7 +1509,7 @@ static int clk_core_determine_round_nolock(struct clk_core *core,
 
 static void clk_core_init_rate_req(struct clk_core * const core,
 				   struct clk_rate_request *req,
-				   unsigned long rate)
+				   clk_rate_t rate)
 {
 	struct clk_core *parent;
 
@@ -1547,7 +1547,7 @@ static void clk_core_init_rate_req(struct clk_core * const core,
  */
 void clk_hw_init_rate_request(const struct clk_hw *hw,
 			      struct clk_rate_request *req,
-			      unsigned long rate)
+			      clk_rate_t rate)
 {
 	if (WARN_ON(!hw || !req))
 		return;
@@ -1571,7 +1571,7 @@ void clk_hw_forward_rate_request(const struct clk_hw *hw,
 				 const struct clk_rate_request *old_req,
 				 const struct clk_hw *parent,
 				 struct clk_rate_request *req,
-				 unsigned long parent_rate)
+				 clk_rate_t parent_rate)
 {
 	if (WARN_ON(!hw || !old_req || !parent || !req))
 		return;
@@ -1658,7 +1658,7 @@ EXPORT_SYMBOL_GPL(__clk_determine_rate);
  * Return: returns rounded rate of hw clk if clk supports round_rate operation
  *         else returns the parent rate.
  */
-unsigned long clk_hw_round_rate(struct clk_hw *hw, unsigned long rate)
+clk_rate_t clk_hw_round_rate(struct clk_hw *hw, clk_rate_t rate)
 {
 	int ret;
 	struct clk_rate_request req;
@@ -1686,7 +1686,7 @@ EXPORT_SYMBOL_GPL(clk_hw_round_rate);
  * use which is then returned.  If clk doesn't support round_rate operation
  * then the parent rate is returned.
  */
-long clk_round_rate(struct clk *clk, unsigned long rate)
+long clk_round_rate(struct clk *clk, clk_rate_t rate)
 {
 	struct clk_rate_request req;
 	int ret;
@@ -1734,7 +1734,7 @@ EXPORT_SYMBOL_GPL(clk_round_rate);
  * a driver returns that.
  */
 static int __clk_notify(struct clk_core *core, unsigned long msg,
-		unsigned long old_rate, unsigned long new_rate)
+			clk_rate_t old_rate, clk_rate_t new_rate)
 {
 	struct clk_notifier *cn;
 	struct clk_notifier_data cnd;
@@ -1817,10 +1817,10 @@ long clk_get_accuracy(struct clk *clk)
 }
 EXPORT_SYMBOL_GPL(clk_get_accuracy);
 
-static unsigned long clk_recalc(struct clk_core *core,
-				unsigned long parent_rate)
+static clk_rate_t clk_recalc(struct clk_core *core,
+			     clk_rate_t parent_rate)
 {
-	unsigned long rate = parent_rate;
+	clk_rate_t rate = parent_rate;
 
 	if (core->ops->recalc_rate && !clk_pm_runtime_get(core)) {
 		rate = core->ops->recalc_rate(core->hw, parent_rate);
@@ -1845,8 +1845,8 @@ static unsigned long clk_recalc(struct clk_core *core,
 static void __clk_recalc_rates(struct clk_core *core, bool update_req,
 			       unsigned long msg)
 {
-	unsigned long old_rate;
-	unsigned long parent_rate = 0;
+	clk_rate_t old_rate;
+	clk_rate_t parent_rate = 0;
 	struct clk_core *child;
 
 	lockdep_assert_held(&prepare_lock);
@@ -1871,7 +1871,7 @@ static void __clk_recalc_rates(struct clk_core *core, bool update_req,
 		__clk_recalc_rates(child, update_req, msg);
 }
 
-static unsigned long clk_core_get_rate_recalc(struct clk_core *core)
+static clk_rate_t clk_core_get_rate_recalc(struct clk_core *core)
 {
 	if (core && (core->flags & CLK_GET_RATE_NOCACHE))
 		__clk_recalc_rates(core, false, 0);
@@ -1888,9 +1888,9 @@ static unsigned long clk_core_get_rate_recalc(struct clk_core *core)
  * the clock enabledness. If clk is NULL, or if an error occurred, then returns
  * 0.
  */
-unsigned long clk_get_rate(struct clk *clk)
+clk_rate_t clk_get_rate(struct clk *clk)
 {
-	unsigned long rate;
+	clk_rate_t rate;
 
 	if (!clk)
 		return 0;
@@ -2116,10 +2116,10 @@ static int __clk_set_parent(struct clk_core *core, struct clk_core *parent,
  * take on the rate of its parent.
  */
 static int __clk_speculate_rates(struct clk_core *core,
-				 unsigned long parent_rate)
+				 clk_rate_t parent_rate)
 {
 	struct clk_core *child;
-	unsigned long new_rate;
+	clk_rate_t new_rate;
 	int ret = NOTIFY_DONE;
 
 	lockdep_assert_held(&prepare_lock);
@@ -2146,7 +2146,7 @@ out:
 	return ret;
 }
 
-static void clk_calc_subtree(struct clk_core *core, unsigned long new_rate,
+static void clk_calc_subtree(struct clk_core *core, clk_rate_t new_rate,
 			     struct clk_core *new_parent, u8 p_index)
 {
 	struct clk_core *child;
@@ -2170,14 +2170,14 @@ static void clk_calc_subtree(struct clk_core *core, unsigned long new_rate,
  * changed.
  */
 static struct clk_core *clk_calc_new_rates(struct clk_core *core,
-					   unsigned long rate)
+					   clk_rate_t rate)
 {
 	struct clk_core *top = core;
 	struct clk_core *old_parent, *parent;
-	unsigned long best_parent_rate = 0;
-	unsigned long new_rate;
-	unsigned long min_rate;
-	unsigned long max_rate;
+	clk_rate_t best_parent_rate = 0;
+	clk_rate_t new_rate;
+	clk_rate_t min_rate;
+	clk_rate_t max_rate;
 	int p_index = 0;
 	long ret;
 
@@ -2298,8 +2298,8 @@ static void clk_change_rate(struct clk_core *core)
 {
 	struct clk_core *child;
 	struct hlist_node *tmp;
-	unsigned long old_rate;
-	unsigned long best_parent_rate = 0;
+	clk_rate_t old_rate;
+	clk_rate_t best_parent_rate = 0;
 	bool skip_set_rate = false;
 	struct clk_core *old_parent;
 	struct clk_core *parent = NULL;
@@ -2383,8 +2383,8 @@ static void clk_change_rate(struct clk_core *core)
 	clk_pm_runtime_put(core);
 }
 
-static unsigned long clk_core_req_round_rate_nolock(struct clk_core *core,
-						     unsigned long req_rate)
+static clk_rate_t clk_core_req_round_rate_nolock(struct clk_core *core,
+						 clk_rate_t req_rate)
 {
 	int ret, cnt;
 	struct clk_rate_request req;
@@ -2414,10 +2414,10 @@ static unsigned long clk_core_req_round_rate_nolock(struct clk_core *core,
 }
 
 static int clk_core_set_rate_nolock(struct clk_core *core,
-				    unsigned long req_rate)
+				    clk_rate_t req_rate)
 {
 	struct clk_core *top, *fail_clk;
-	unsigned long rate;
+	clk_rate_t rate;
 	int ret;
 
 	if (!core)
@@ -2483,7 +2483,7 @@ err:
  *
  * Returns 0 on success, -EERROR otherwise.
  */
-int clk_set_rate(struct clk *clk, unsigned long rate)
+int clk_set_rate(struct clk *clk, clk_rate_t rate)
 {
 	int ret;
 
@@ -2526,7 +2526,7 @@ EXPORT_SYMBOL_GPL(clk_set_rate);
  *
  * Returns 0 on success, -EERROR otherwise.
  */
-int clk_set_rate_exclusive(struct clk *clk, unsigned long rate)
+int clk_set_rate_exclusive(struct clk *clk, clk_rate_t rate)
 {
 	int ret;
 
@@ -2555,11 +2555,11 @@ int clk_set_rate_exclusive(struct clk *clk, unsigned long rate)
 EXPORT_SYMBOL_GPL(clk_set_rate_exclusive);
 
 static int clk_set_rate_range_nolock(struct clk *clk,
-				     unsigned long min,
-				     unsigned long max)
+				     clk_rate_t min,
+				     clk_rate_t max)
 {
 	int ret = 0;
-	unsigned long old_min, old_max, rate;
+	clk_rate_t old_min, old_max, rate;
 
 	lockdep_assert_held(&prepare_lock);
 
@@ -2633,7 +2633,7 @@ out:
  *
  * Return: 0 for success or negative errno on failure.
  */
-int clk_set_rate_range(struct clk *clk, unsigned long min, unsigned long max)
+int clk_set_rate_range(struct clk *clk, clk_rate_t min, clk_rate_t max)
 {
 	int ret;
 
@@ -2657,7 +2657,7 @@ EXPORT_SYMBOL_GPL(clk_set_rate_range);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_min_rate(struct clk *clk, unsigned long rate)
+int clk_set_min_rate(struct clk *clk, clk_rate_t rate)
 {
 	if (!clk)
 		return 0;
@@ -2675,7 +2675,7 @@ EXPORT_SYMBOL_GPL(clk_set_min_rate);
  *
  * Returns success (0) or negative errno.
  */
-int clk_set_max_rate(struct clk *clk, unsigned long rate)
+int clk_set_max_rate(struct clk *clk, clk_rate_t rate)
 {
 	if (!clk)
 		return 0;
@@ -2759,7 +2759,7 @@ static int clk_core_set_parent_nolock(struct clk_core *core,
 {
 	int ret = 0;
 	int p_index = 0;
-	unsigned long p_rate = 0;
+	clk_rate_t p_rate = 0;
 
 	lockdep_assert_held(&prepare_lock);
 
@@ -3263,7 +3263,7 @@ DEFINE_SHOW_ATTRIBUTE(clk_summary);
 static void clk_dump_one(struct seq_file *s, struct clk_core *c, int level)
 {
 	int phase;
-	unsigned long min_rate, max_rate;
+	clk_rate_t min_rate, max_rate;
 
 	clk_core_get_boundaries(c, &min_rate, &max_rate);
 
@@ -3566,7 +3566,7 @@ DEFINE_SHOW_ATTRIBUTE(clk_duty_cycle);
 static int clk_min_rate_show(struct seq_file *s, void *data)
 {
 	struct clk_core *core = s->private;
-	unsigned long min_rate, max_rate;
+	clk_rate_t min_rate, max_rate;
 
 	clk_prepare_lock();
 	clk_core_get_boundaries(core, &min_rate, &max_rate);
@@ -3580,7 +3580,7 @@ DEFINE_SHOW_ATTRIBUTE(clk_min_rate);
 static int clk_max_rate_show(struct seq_file *s, void *data)
 {
 	struct clk_core *core = s->private;
-	unsigned long min_rate, max_rate;
+	clk_rate_t min_rate, max_rate;
 
 	clk_prepare_lock();
 	clk_core_get_boundaries(core, &min_rate, &max_rate);
@@ -3781,7 +3781,7 @@ static int __clk_core_init(struct clk_core *core)
 {
 	int ret;
 	struct clk_core *parent;
-	unsigned long rate;
+	clk_rate_t rate;
 	int phase;
 
 	clk_prepare_lock();
@@ -4375,8 +4375,8 @@ static void clk_nodrv_disable_unprepare(struct clk_hw *hw)
 	WARN_ON_ONCE(1);
 }
 
-static int clk_nodrv_set_rate(struct clk_hw *hw, unsigned long rate,
-					unsigned long parent_rate)
+static int clk_nodrv_set_rate(struct clk_hw *hw, clk_rate_t rate,
+			      clk_rate_t parent_rate)
 {
 	return -ENXIO;
 }
