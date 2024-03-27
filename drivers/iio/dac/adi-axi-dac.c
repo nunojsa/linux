@@ -45,6 +45,8 @@
 #define   AXI_DAC_RSTN_RSTN		BIT(0)
 #define AXI_DAC_REG_CNTRL_1		0x0044
 #define   AXI_DAC_SYNC			BIT(0)
+#define AXI_DAC_REG_CNTRL_2		0x0048
+#define   ADI_DAC_R1_MODE		BIT(4)
 #define AXI_DAC_DRP_STATUS		0x0074
 #define   AXI_DAC_DRP_LOCKED		BIT(17)
 /* DAC Channel controls */
@@ -280,12 +282,7 @@ static int __axi_dac_frequency_set(struct axi_dac_state *st, unsigned int chan,
 
 	raw = DIV64_U64_ROUND_CLOSEST((u64)freq * BIT(16), sample_rate);
 
-	if (freq)
-		ret = regmap_update_bits(st->regmap,  reg, AXI_DAC_FREQUENCY, raw);
-	else
-		ret = regmap_update_bits(st->regmap,
-					 AXI_DAC_REG_CHAN_CNTRL_7(chan),
-					 AXI_DAC_DATA_SEL, 3);
+	ret = regmap_update_bits(st->regmap,  reg, AXI_DAC_FREQUENCY, raw);
 	if (ret)
 		return ret;
 
@@ -595,6 +592,18 @@ static int axi_dac_probe(struct platform_device *pdev)
 
 	/* Let's get the core read only configuration */
 	ret = regmap_read(st->regmap, AXI_DAC_REG_CONFIG, &st->reg_config);
+	if (ret)
+		return ret;
+
+	/*
+	 * In some designs, setting the R1_MODE bit to 0 (which is the default
+	 * value) causes all channels of the frontend to be routed to the same
+	 * DMA (so they are sampled together). This is for things like
+	 * Multiple-Input and Multiple-Output (MIMO). As most of the times we
+	 * want independent channels let's override the core's default value and
+	 * set the R1_MODE bit.
+	 */
+	ret = regmap_set_bits(st->regmap, AXI_DAC_REG_CNTRL_2, ADI_DAC_R1_MODE);
 	if (ret)
 		return ret;
 
