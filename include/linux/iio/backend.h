@@ -15,6 +15,21 @@ enum iio_backend_data_type {
 	IIO_BACKEND_DATA_TYPE_MAX
 };
 
+/* vendor specific from 32 */
+enum iio_backend_test_pattern {
+	/* modified prbs9 */
+	IIO_BACKEND_ADI_PRBS_9A = 32,
+	/* modified prbs23 */
+	IIO_BACKEND_ADI_PRBS_23A,
+	IIO_BACKEND_TEST_PATTERN_MAX
+};
+
+enum iio_backend_sample_trigger {
+	IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING,
+	IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING,
+	IIO_BACKEND_SAMPLE_TRIGGER_MAX
+};
+
 /**
  * struct iio_backend_data_fmt - Backend data format
  * @type:		Data type.
@@ -26,6 +41,10 @@ struct iio_backend_data_fmt {
 	enum iio_backend_data_type type;
 	bool sign_extend;
 	bool enable;
+};
+
+struct iio_backend_chan_status {
+	bool errors;
 };
 
 /**
@@ -45,6 +64,15 @@ struct iio_backend_ops {
 	int (*chan_disable)(struct iio_backend *back, unsigned int chan);
 	int (*data_format_set)(struct iio_backend *back, unsigned int chan,
 			       const struct iio_backend_data_fmt *data);
+	int (*test_pattern_set)(struct iio_backend *back,
+				unsigned int chan,
+				enum iio_backend_test_pattern pattern);
+	int (*chan_status)(struct iio_backend *back, unsigned int chan,
+			   struct iio_backend_chan_status *status);
+	int (*iodelay_set)(struct iio_backend *back, unsigned int chan,
+			   unsigned int delay_ns);
+	int (*data_sample_trigger)(struct iio_backend *back,
+				   enum iio_backend_sample_trigger trigger);
 	struct iio_buffer *(*request_buffer)(struct iio_backend *back,
 					     struct iio_dev *indio_dev);
 	void (*free_buffer)(struct iio_backend *back,
@@ -56,6 +84,15 @@ int iio_backend_chan_disable(struct iio_backend *back, unsigned int chan);
 int devm_iio_backend_enable(struct device *dev, struct iio_backend *back);
 int iio_backend_data_format_set(struct iio_backend *back, unsigned int chan,
 				const struct iio_backend_data_fmt *data);
+int iio_backend_test_pattern_set(struct iio_backend *back,
+				 unsigned int chan,
+				 enum iio_backend_test_pattern pattern);
+int iio_backend_chan_status(struct iio_backend *back, unsigned int chan,
+			    struct iio_backend_chan_status *status);
+int iio_backend_iodelay_set(struct iio_backend *back, unsigned int chan,
+			    unsigned int delay_ns);
+int iio_backend_data_sample_trigger(struct iio_backend *back,
+				    enum iio_backend_sample_trigger trigger);
 int devm_iio_backend_request_buffer(struct device *dev,
 				    struct iio_backend *back,
 				    struct iio_dev *indio_dev);
