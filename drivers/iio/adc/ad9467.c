@@ -100,6 +100,8 @@
 #define AD9467_DEF_OUTPUT_MODE		0x08
 #define AD9467_REG_VREF_MASK		0x0F
 
+#define AD9647_MAX_TEST_POINTS		32
+
 struct ad9467_chip_info {
 	const char		*name;
 	unsigned int		id;
@@ -110,6 +112,8 @@ struct ad9467_chip_info {
 	unsigned long		max_rate;
 	unsigned int		default_output_mode;
 	unsigned int		vref_mask;
+	unsigned int		num_lanes;
+	bool			has_dco;
 };
 
 struct ad9467_state {
@@ -242,6 +246,7 @@ static const struct ad9467_chip_info ad9467_chip_tbl = {
 	.num_channels = ARRAY_SIZE(ad9467_channels),
 	.default_output_mode = AD9467_DEF_OUTPUT_MODE,
 	.vref_mask = AD9467_REG_VREF_MASK,
+	.num_lanes = 8,
 };
 
 static const struct ad9467_chip_info ad9434_chip_tbl = {
@@ -254,6 +259,7 @@ static const struct ad9467_chip_info ad9434_chip_tbl = {
 	.num_channels = ARRAY_SIZE(ad9434_channels),
 	.default_output_mode = AD9434_DEF_OUTPUT_MODE,
 	.vref_mask = AD9434_REG_VREF_MASK,
+	.num_lanes = 6,
 };
 
 static const struct ad9467_chip_info ad9265_chip_tbl = {
@@ -266,6 +272,7 @@ static const struct ad9467_chip_info ad9265_chip_tbl = {
 	.num_channels = ARRAY_SIZE(ad9467_channels),
 	.default_output_mode = AD9265_DEF_OUTPUT_MODE,
 	.vref_mask = AD9265_REG_VREF_MASK,
+	.has_dco = true,
 };
 
 static int ad9467_get_scale(struct ad9467_state *st, int *val, int *val2)
@@ -321,6 +328,234 @@ static int ad9467_set_scale(struct ad9467_state *st, int val, int val2)
 	return -EINVAL;
 }
 
+static void ad9467_dump_table(const unsigned char *err_field,
+			      unsigned int size, unsigned int val)
+{
+	unsigned int cnt;
+
+	for (cnt = 0; cnt < size; cnt++) {
+		if (cnt == val) {
+			pr_debug("|");
+			continue;
+		}
+
+		pr_debug("%c", err_field[cnt] ? '-' : 'o');
+		if (cnt == size / 2)
+			pr_debug("\n");
+	}
+}
+
+static int ad9647_calibrate_prepare(const struct ad9467_state *st)
+{
+	int ret;
+
+	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TEST_IO,
+			       AN877_ADC_TESTMODE_PN9_SEQ);
+	if (ret)
+		return ret;
+
+	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
+			       AN877_ADC_TRANSFER_SYNC);
+		if (ret)
+			return ret;
+
+	ret = iio_backend_test_pattern_set(st->back, 0,
+					   IIO_BACKEND_ADI_PRBS_9A);
+	if (ret)
+		return ret;
+
+	return iio_backend_chan_enable(st->back, 0);
+}
+
+static int ad9647_calibrate_stop(const struct ad9467_state *st)
+{
+	int ret;
+
+	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TEST_IO,
+			       AN877_ADC_TESTMODE_OFF);
+	if (ret)
+		return ret;
+
+	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
+			       AN877_ADC_TRANSFER_SYNC);
+	if (ret)
+		return ret;
+
+	return iio_backend_chan_disable(st->back, 0);
+}
+
+static int ad9467_calibrate_apply(const struct ad9467_state *st,
+				  unsigned int val)
+{
+	unsigned int lane;
+	int ret;
+
+	if (st->info->has_dco) {
+		int ret;
+
+		ret = ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_DELAY,
+				       val);
+		if (ret)
+			return ret;
+
+		return ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
+					AN877_ADC_TRANSFER_SYNC);
+	}
+
+	for (lane = 0; lane < st->info->num_lanes; lane++) {
+		ret = iio_backend_iodelay_set(st->back, lane, val);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int ad9467_calibrate_status_check(const struct ad9467_state *st)
+{
+	struct iio_backend_chan_status status = {0};
+	int ret;
+
+	ret = iio_backend_chan_status(st->back, 0, &status);
+	if (ret)
+		return ret;
+
+	if (status.errors)
+		return 1;
+
+	return 0;
+}
+
+static int ad9467_find_optimal_point(const unsigned char *err_field,
+				     unsigned int size, unsigned int *point)
+{
+	unsigned int val, cnt = 0, max_cnt = 0, max_start = 0;
+	int start = -1;
+
+	for (val = 0; val < size; val++) {
+		if (!err_field[val]) {
+			if (start == -1)
+				start = val;
+			cnt++;
+		} else {
+			if (cnt > max_cnt) {
+				max_cnt = cnt;
+				max_start = start;
+			}
+
+			start = -1;
+			cnt = 0;
+		}
+	}
+
+	if (cnt > max_cnt) {
+		max_cnt = cnt;
+		max_start = start;
+	}
+
+	if (!max_cnt)
+		return -EIO;
+
+	*point = max_start + max_cnt / 2;
+	ad9467_dump_table(err_field, size, *point);
+
+	return 0;
+}
+
+static int ad9467_calibrate(const struct ad9467_state *st)
+{
+	unsigned char err_field[AD9647_MAX_TEST_POINTS * 2] = {0};
+	unsigned int max_val = AD9647_MAX_TEST_POINTS, val;
+	unsigned long sample_rate = clk_get_rate(st->clk);
+	bool inv_range = false;
+	int ret;
+
+	ret = ad9647_calibrate_prepare(st);
+	if (ret)
+		return ret;
+
+retune:
+	if (st->info->has_dco) {
+		unsigned int phase = AN877_ADC_OUTPUT_EVEN_ODD_MODE_EN;
+
+		if (inv_range)
+			phase |= AN877_ADC_INVERT_DCO_CLK;
+
+		ret = ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_PHASE,
+				       phase);
+		if (ret)
+			return ret;
+	} else {
+		int trigger;
+
+		if (inv_range)
+			trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING;
+		else
+			trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
+
+		ret = iio_backend_data_sample_trigger(st->back, trigger);
+		if (ret)
+			return ret;
+	}
+
+	for (val = 0; val < max_val; val++) {
+		ret = ad9467_calibrate_apply(st, val);
+		if (ret)
+			return ret;
+
+		ret = ad9467_calibrate_status_check(st);
+		if (ret < 0)
+			return ret;
+
+		err_field[val + inv_range * max_val] = ret;
+	}
+
+	if (!inv_range) {
+		inv_range = true;
+		goto retune;
+	}
+
+	ret = ad9467_find_optimal_point(err_field, sizeof(err_field), &val);
+	if (ret < 0)
+		return ret;
+
+	if (val < max_val) {
+		int trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
+
+		if (st->info->has_dco)
+			ret = ad9467_spi_write(st->spi,
+					       AN877_ADC_REG_OUTPUT_PHASE,
+					       AN877_ADC_OUTPUT_EVEN_ODD_MODE_EN);
+		else
+			ret = iio_backend_data_sample_trigger(st->back, trigger);
+		if (ret)
+			return ret;
+
+		inv_range = false;
+	} else {
+		/*
+		 * inv_range = true is the last test to run. Hence, there's no
+		 * need to re-do any configuration
+		 */
+		val -= max_val + 1;
+	}
+
+	if (st->info->has_dco)
+		dev_dbg(&st->spi->dev,
+			" %s DCO 0x%X CLK %lu Hz\n", inv_range ? "INVERT" : "",
+			 val, sample_rate);
+	else
+		dev_dbg(&st->spi->dev,
+			" %s IDELAY 0x%x\n", inv_range ? "INVERT" : "", val);
+
+	ret = ad9647_calibrate_stop(st);
+	if (ret)
+		return ret;
+
+	/* finally apply the optimal value */
+	return ad9467_calibrate_apply(st, val);
+}
+
 static int ad9467_read_raw(struct iio_dev *indio_dev,
 			   struct iio_chan_spec const *chan,
 			   int *val, int *val2, long m)
@@ -346,11 +581,16 @@ static int ad9467_write_raw(struct iio_dev *indio_dev,
 	struct ad9467_state *st = iio_priv(indio_dev);
 	const struct ad9467_chip_info *info = st->info;
 	long r_clk;
+	int ret;
 
 	switch (mask) {
 	case IIO_CHAN_INFO_SCALE:
 		return ad9467_set_scale(st, val, val2);
 	case IIO_CHAN_INFO_SAMP_FREQ:
+		ret = iio_device_claim_direct_mode(indio_dev);
+		if (ret)
+			return ret;
+
 		r_clk = clk_round_rate(st->clk, val);
 		if (r_clk < 0 || r_clk > info->max_rate) {
 			dev_warn(&st->spi->dev,
@@ -358,7 +598,15 @@ static int ad9467_write_raw(struct iio_dev *indio_dev,
 			return -EINVAL;
 		}
 
-		return clk_set_rate(st->clk, r_clk);
+		ret = clk_set_rate(st->clk, r_clk);
+		if (ret) {
+			iio_device_release_direct_mode(indio_dev);
+			return ret;
+		}
+
+		ret = ad9467_calibrate(st);
+		iio_device_release_direct_mode(indio_dev);
+		return ret;
 	default:
 		return -EINVAL;
 	}
@@ -450,6 +698,14 @@ static int ad9467_setup(struct ad9467_state *st)
 	};
 	unsigned int c, mode;
 	int ret;
+
+	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
+	if (ret)
+		return ret;
+
+	ret = ad9467_calibrate(st);
+	if (ret)
+		return ret;
 
 	mode = st->info->default_output_mode | AN877_ADC_OUTPUT_MODE_TWOS_COMPLEMENT;
 	ret = ad9467_outputmode_set(st->spi, mode);

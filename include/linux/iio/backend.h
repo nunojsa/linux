@@ -89,7 +89,7 @@ int iio_backend_test_pattern_set(struct iio_backend *back,
 				 enum iio_backend_test_pattern pattern);
 int iio_backend_chan_status(struct iio_backend *back, unsigned int chan,
 			    struct iio_backend_chan_status *status);
-int iio_backend_iodelay_set(struct iio_backend *back, unsigned int chan,
+int iio_backend_iodelay_set(struct iio_backend *back, unsigned int lane,
 			    unsigned int delay_ns);
 int iio_backend_data_sample_trigger(struct iio_backend *back,
 				    enum iio_backend_sample_trigger trigger);
