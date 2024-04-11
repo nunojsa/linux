@@ -4,6 +4,8 @@
  *
  * Copyright 2012-2020 Analog Devices Inc.
  */
+#define DEBUG
+#include "linux/bitmap.h"
 #include <linux/cleanup.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -335,13 +337,13 @@ static void ad9467_dump_table(const unsigned char *err_field,
 
 	for (cnt = 0; cnt < size; cnt++) {
 		if (cnt == val) {
-			pr_debug("|");
+			pr_info("|");
 			continue;
 		}
 
-		pr_debug("%c", err_field[cnt] ? '-' : 'o');
+		pr_info("%c", err_field[cnt] ? '-' : 'o');
 		if (cnt == size / 2)
-			pr_debug("\n");
+			pr_info("\n");
 	}
 }
 
@@ -426,11 +428,36 @@ static int ad9467_calibrate_status_check(const struct ad9467_state *st)
 	return 0;
 }
 
+/*
+static int ad9467_find_optimal_point(const unsigned long *err_map,
+				     unsigned int size, unsigned int *val)
+{
+	unsigned int point, last_point = 0, cnt = 0;
+	int start = -1;
+
+	if (bitmap_empty(err_map, size))
+		return -EIO;
+
+	for_each_clear_bitrange(point, last_point, err_map, size) {
+		if (last_point - point > cnt) {
+			cnt = last_point - point;
+			start = point;
+		}
+	}
+
+	*val = start + cnt / 2;
+	ad9467_dump_table(err_map, size, *val);
+
+	return 0;
+}
+*/
 static int ad9467_find_optimal_point(const unsigned char *err_field,
 				     unsigned int size, unsigned int *point)
 {
 	unsigned int val, cnt = 0, max_cnt = 0, max_start = 0;
 	int start = -1;
+
+	ad9467_dump_table(err_field, size, *point);
 
 	for (val = 0; val < size; val++) {
 		if (!err_field[val]) {
@@ -457,7 +484,6 @@ static int ad9467_find_optimal_point(const unsigned char *err_field,
 		return -EIO;
 
 	*point = max_start + max_cnt / 2;
-	ad9467_dump_table(err_field, size, *point);
 
 	return 0;
 }
@@ -542,11 +568,11 @@ retune:
 
 	if (st->info->has_dco)
 		dev_dbg(&st->spi->dev,
-			" %s DCO 0x%X CLK %lu Hz\n", inv_range ? "INVERT" : "",
+			"%s DCO 0x%X CLK %lu Hz\n", inv_range ? "INVERT" : "",
 			 val, sample_rate);
 	else
 		dev_dbg(&st->spi->dev,
-			" %s IDELAY 0x%x\n", inv_range ? "INVERT" : "", val);
+			"%s IDELAY 0x%x\n", inv_range ? "INVERT" : "", val);
 
 	ret = ad9647_calibrate_stop(st);
 	if (ret)
@@ -572,6 +598,49 @@ static int ad9467_read_raw(struct iio_dev *indio_dev,
 	default:
 		return -EINVAL;
 	}
+}
+
+static int ad9467_outputmode_set(struct spi_device *spi, unsigned int mode)
+{
+	int ret;
+
+	ret = ad9467_spi_write(spi, AN877_ADC_REG_OUTPUT_MODE, mode);
+	if (ret < 0)
+		return ret;
+
+	return ad9467_spi_write(spi, AN877_ADC_REG_TRANSFER,
+				AN877_ADC_TRANSFER_SYNC);
+}
+
+static int ad9467_setup(struct ad9467_state *st)
+{
+	struct iio_backend_data_fmt data = {
+		.sign_extend = true,
+		.enable = true,
+	};
+	unsigned int c, mode;
+	int ret;
+
+	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
+	if (ret)
+		return ret;
+
+	ret = ad9467_calibrate(st);
+	if (ret)
+		return ret;
+
+	mode = st->info->default_output_mode | AN877_ADC_OUTPUT_MODE_TWOS_COMPLEMENT;
+	ret = ad9467_outputmode_set(st->spi, mode);
+	if (ret)
+		return ret;
+
+	for (c = 0; c < st->info->num_channels; c++) {
+		ret = iio_backend_data_format_set(st->back, c, &data);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
 }
 
 static int ad9467_write_raw(struct iio_dev *indio_dev,
@@ -604,7 +673,7 @@ static int ad9467_write_raw(struct iio_dev *indio_dev,
 			return ret;
 		}
 
-		ret = ad9467_calibrate(st);
+		ret = ad9467_setup(st);
 		iio_device_release_direct_mode(indio_dev);
 		return ret;
 	default:
@@ -659,18 +728,6 @@ static const struct iio_info ad9467_info = {
 	.read_avail = ad9467_read_avail,
 };
 
-static int ad9467_outputmode_set(struct spi_device *spi, unsigned int mode)
-{
-	int ret;
-
-	ret = ad9467_spi_write(spi, AN877_ADC_REG_OUTPUT_MODE, mode);
-	if (ret < 0)
-		return ret;
-
-	return ad9467_spi_write(spi, AN877_ADC_REG_TRANSFER,
-				AN877_ADC_TRANSFER_SYNC);
-}
-
 static int ad9467_scale_fill(struct ad9467_state *st)
 {
 	const struct ad9467_chip_info *info = st->info;
@@ -685,37 +742,6 @@ static int ad9467_scale_fill(struct ad9467_state *st)
 		__ad9467_get_scale(st, i, &val1, &val2);
 		st->scales[i][0] = val1;
 		st->scales[i][1] = val2;
-	}
-
-	return 0;
-}
-
-static int ad9467_setup(struct ad9467_state *st)
-{
-	struct iio_backend_data_fmt data = {
-		.sign_extend = true,
-		.enable = true,
-	};
-	unsigned int c, mode;
-	int ret;
-
-	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
-	if (ret)
-		return ret;
-
-	ret = ad9467_calibrate(st);
-	if (ret)
-		return ret;
-
-	mode = st->info->default_output_mode | AN877_ADC_OUTPUT_MODE_TWOS_COMPLEMENT;
-	ret = ad9467_outputmode_set(st->spi, mode);
-	if (ret)
-		return ret;
-
-	for (c = 0; c < st->info->num_channels; c++) {
-		ret = iio_backend_data_format_set(st->back, c, &data);
-		if (ret)
-			return ret;
 	}
 
 	return 0;
