@@ -4,6 +4,7 @@
  *
  * Copyright 2012-2020 Analog Devices Inc.
  */
+#include "linux/stddef.h"
 #define DEBUG
 #include "linux/bitmap.h"
 #include <linux/cleanup.h>
@@ -333,18 +334,17 @@ static int ad9467_set_scale(struct ad9467_state *st, int val, int val2)
 static void ad9467_dump_table(const unsigned char *err_field,
 			      unsigned int size, unsigned int val)
 {
+#ifdef DEBUG
 	unsigned int cnt;
 
+	pr_debug("Dump calibration table:\n");
 	for (cnt = 0; cnt < size; cnt++) {
-		if (cnt == val) {
-			pr_info("|");
-			continue;
-		}
-
-		pr_info("%c", err_field[cnt] ? '-' : 'o');
 		if (cnt == size / 2)
-			pr_info("\n");
+			pr_cont("\n");
+
+		pr_cont("%c", err_field[cnt] ? '-' : 'o');
 	}
+#endif
 }
 
 static int ad9647_calibrate_prepare(const struct ad9467_state *st)
@@ -624,6 +624,13 @@ static int ad9467_setup(struct ad9467_state *st)
 	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
 	if (ret)
 		return ret;
+
+	data.enable = false;
+	for (c = 0; c < st->info->num_channels; c++) {
+		ret = iio_backend_data_format_set(st->back, c, &data);
+		if (ret)
+			return ret;
+	}
 
 	ret = ad9467_calibrate(st);
 	if (ret)
