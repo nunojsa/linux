@@ -84,7 +84,7 @@ static int axi_adc_enable(struct iio_backend *back)
 	struct adi_axi_adc_state *st = iio_backend_get_priv(back);
 	int ret;
 
-	ret = regmap_set_bits(st->regmap, ADI_AXI_REG_RSTN,
+	ret = regmap_write(st->regmap, ADI_AXI_REG_RSTN,
 			      ADI_AXI_REG_RSTN_MMCM_RSTN);
 	if (ret)
 		return ret;
@@ -156,8 +156,7 @@ static int axi_adc_iodelays_set(struct iio_backend *back, unsigned int lane,
 		return -EINVAL;
 
 	guard(mutex)(&st->lock);
-	ret = regmap_update_bits(st->regmap, ADI_AXI_ADC_REG_DELAY(lane),
-				 AXI_ADC_DELAY_CTRL_MASK, delay_ns);
+	ret = regmap_write(st->regmap, ADI_AXI_ADC_REG_DELAY(lane), delay_ns);
 	if (ret)
 		return ret;
 	/*
@@ -165,7 +164,8 @@ static int axi_adc_iodelays_set(struct iio_backend *back, unsigned int lane,
 	 * delay_clk.
 	 */
 	ret = regmap_read(st->regmap, ADI_AXI_ADC_REG_DELAY(lane), &val);
-	dev_info(st->dev, "Set delay readback %08X\n", val);
+	dev_info(st->dev, "Set delay readback %u, reg:%08X\n", val,
+		 ADI_AXI_ADC_REG_DELAY(lane));
 	if (ret)
 		return ret;
 	if (val == U32_MAX)
@@ -207,8 +207,8 @@ static int axi_adc_chan_status(struct iio_backend *back, unsigned int chan,
 	guard(mutex)(&st->lock);
 
 	/* reset test bits by setting them */
-	ret = regmap_set_bits(st->regmap, ADI_AXI_ADC_REG_CHAN_STATUS(chan),
-			      ADI_AXI_ADC_CHAN_STAT_PN_MASK);
+	ret = regmap_write(st->regmap, ADI_AXI_ADC_REG_CHAN_STATUS(chan),
+			   ADI_AXI_ADC_CHAN_STAT_PN_MASK);
 	if (ret)
 		return ret;
 
@@ -218,7 +218,7 @@ static int axi_adc_chan_status(struct iio_backend *back, unsigned int chan,
 	if (ret)
 		return ret;
 
-	dev_info(st->dev, "chan:%u status:%08X\n", chan, val);
+	dev_info(st->dev, "chan:%u status:%02X\n", chan, val);
 
 	if (ADI_AXI_ADC_CHAN_STAT_PN_MASK & val)
 		status->errors = true;

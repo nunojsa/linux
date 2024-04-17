@@ -4,7 +4,9 @@
  *
  * Copyright 2012-2020 Analog Devices Inc.
  */
+#include "linux/bitops.h"
 #include "linux/stddef.h"
+#include "linux/types.h"
 #define DEBUG
 #include "linux/bitmap.h"
 #include <linux/cleanup.h>
@@ -331,24 +333,39 @@ static int ad9467_set_scale(struct ad9467_state *st, int val, int val2)
 	return -EINVAL;
 }
 
-static void ad9467_dump_table(const unsigned char *err_field,
-			      unsigned int size, unsigned int val)
+static void ad9467_dump_table(const unsigned long *err_map, unsigned int size)
 {
 #ifdef DEBUG
-	unsigned int cnt;
+	unsigned int bit;
 
 	pr_debug("Dump calibration table:\n");
-	for (cnt = 0; cnt < size; cnt++) {
-		if (cnt == size / 2)
+	for (bit = 0; bit < size; bit++) {
+		if (bit == size / 2)
 			pr_cont("\n");
 
-		pr_cont("%c", err_field[cnt] ? '-' : 'o');
+		pr_cont("%c", test_bit(bit, err_map) ? 'x' : 'o');
 	}
 #endif
 }
 
+static int ad9467_outputmode_set(struct spi_device *spi, unsigned int mode)
+{
+	int ret;
+
+	ret = ad9467_spi_write(spi, AN877_ADC_REG_OUTPUT_MODE, mode);
+	if (ret < 0)
+		return ret;
+
+	return ad9467_spi_write(spi, AN877_ADC_REG_TRANSFER,
+				AN877_ADC_TRANSFER_SYNC);
+}
+
 static int ad9647_calibrate_prepare(const struct ad9467_state *st)
 {
+	struct iio_backend_data_fmt data = {
+		.enable = false,
+	};
+	unsigned int c;
 	int ret;
 
 	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TEST_IO,
@@ -361,6 +378,16 @@ static int ad9647_calibrate_prepare(const struct ad9467_state *st)
 		if (ret)
 			return ret;
 
+	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
+	if (ret)
+		return ret;
+
+	for (c = 0; c < st->info->num_channels; c++) {
+		ret = iio_backend_data_format_set(st->back, c, &data);
+		if (ret)
+			return ret;
+	}
+
 	ret = iio_backend_test_pattern_set(st->back, 0,
 					   IIO_BACKEND_ADI_PRBS_9A);
 	if (ret)
@@ -369,51 +396,31 @@ static int ad9647_calibrate_prepare(const struct ad9467_state *st)
 	return iio_backend_chan_enable(st->back, 0);
 }
 
-static int ad9647_calibrate_stop(const struct ad9467_state *st)
+static int ad9647_calibrate_polarity_set(const struct ad9467_state *st,
+					 bool invert)
 {
-	int ret;
-
-	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TEST_IO,
-			       AN877_ADC_TESTMODE_OFF);
-	if (ret)
-		return ret;
-
-	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
-			       AN877_ADC_TRANSFER_SYNC);
-	if (ret)
-		return ret;
-
-	return iio_backend_chan_disable(st->back, 0);
-}
-
-static int ad9467_calibrate_apply(const struct ad9467_state *st,
-				  unsigned int val)
-{
-	unsigned int lane;
-	int ret;
+	enum iio_backend_sample_trigger trigger;
 
 	if (st->info->has_dco) {
-		int ret;
+		unsigned int phase = AN877_ADC_OUTPUT_EVEN_ODD_MODE_EN;
 
-		ret = ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_DELAY,
-				       val);
-		if (ret)
-			return ret;
+		if (invert)
+			phase |= AN877_ADC_INVERT_DCO_CLK;
 
-		return ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
-					AN877_ADC_TRANSFER_SYNC);
+		return ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_PHASE,
+					phase);
 	}
 
-	for (lane = 0; lane < st->info->num_lanes; lane++) {
-		ret = iio_backend_iodelay_set(st->back, lane, val);
-		if (ret)
-			return ret;
-	}
+	if (invert)
+		trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING;
+	else
+		trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
 
-	return 0;
+	return iio_backend_data_sample_trigger(st->back, trigger);
 }
 
-static int ad9467_calibrate_status_check(const struct ad9467_state *st)
+static bool ad9467_calibrate_status_check(const struct ad9467_state *st,
+					  bool *stat)
 {
 	struct iio_backend_chan_status status = {0};
 	int ret;
@@ -422,23 +429,34 @@ static int ad9467_calibrate_status_check(const struct ad9467_state *st)
 	if (ret)
 		return ret;
 
-	if (status.errors)
-		return 1;
+	*stat = status.errors;
 
 	return 0;
 }
 
-/*
 static int ad9467_find_optimal_point(const unsigned long *err_map,
 				     unsigned int size, unsigned int *val)
 {
-	unsigned int point, last_point = 0, cnt = 0;
-	int start = -1;
+	unsigned int point, last_point, cnt, start;
 
-	if (bitmap_empty(err_map, size))
+	ad9467_dump_table(err_map, size);
+
+	if (bitmap_full(err_map, size))
 		return -EIO;
 
-	for_each_clear_bitrange(point, last_point, err_map, size) {
+	/* first let's look on the non inverted */
+	for_each_clear_bitrange(point, last_point, err_map, size / 2) {
+		pr_info("Got subset [%u %u]\n", point, last_point);
+		if (last_point - point > cnt) {
+			cnt = last_point - point;
+			start = point;
+		}
+	}
+
+	/* look for the inverted polarity now */
+	pr_info("Point now is %u %u\n", point, last_point);
+	for_each_clear_bitrange_from(point, last_point, err_map, size) {
+		pr_info("[INVERTED]: Got subset [%u %u]\n", point, last_point);
 		if (last_point - point > cnt) {
 			cnt = last_point - point;
 			start = point;
@@ -446,11 +464,12 @@ static int ad9467_find_optimal_point(const unsigned long *err_map,
 	}
 
 	*val = start + cnt / 2;
-	ad9467_dump_table(err_map, size, *val);
+	pr_info("Got val %u\n", *val);
 
 	return 0;
 }
-*/
+
+/*
 static int ad9467_find_optimal_point(const unsigned char *err_field,
 				     unsigned int size, unsigned int *point)
 {
@@ -487,65 +506,112 @@ static int ad9467_find_optimal_point(const unsigned char *err_field,
 
 	return 0;
 }
+*/
+static int ad9467_calibrate_apply(const struct ad9467_state *st,
+				  unsigned int val)
+{
+	unsigned int lane;
+	int ret;
+
+	if (st->info->has_dco) {
+		int ret;
+
+		ret = ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_DELAY,
+				       val);
+		if (ret)
+			return ret;
+
+		return ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
+					AN877_ADC_TRANSFER_SYNC);
+	}
+
+	for (lane = 0; lane < st->info->num_lanes; lane++) {
+		ret = iio_backend_iodelay_set(st->back, lane, val);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+static int ad9647_calibrate_stop(const struct ad9467_state *st)
+{
+	struct iio_backend_data_fmt data = {
+		.sign_extend = true,
+		.enable = true,
+	};
+	unsigned int c, mode;
+	int ret;
+
+	ret = iio_backend_chan_disable(st->back, 0);
+	if (ret)
+		return ret;
+
+	for (c = 0; c < st->info->num_channels; c++) {
+		ret = iio_backend_data_format_set(st->back, c, &data);
+		if (ret)
+			return ret;
+	}
+
+	mode = st->info->default_output_mode | AN877_ADC_OUTPUT_MODE_TWOS_COMPLEMENT;
+	ret = ad9467_outputmode_set(st->spi, mode);
+	if (ret)
+		return ret;
+
+	ret = ad9467_spi_write(st->spi, AN877_ADC_REG_TEST_IO,
+			       AN877_ADC_TESTMODE_OFF);
+	if (ret)
+		return ret;
+
+	return ad9467_spi_write(st->spi, AN877_ADC_REG_TRANSFER,
+			       AN877_ADC_TRANSFER_SYNC);
+}
 
 static int ad9467_calibrate(const struct ad9467_state *st)
 {
-	unsigned char err_field[AD9647_MAX_TEST_POINTS * 2] = {0};
-	unsigned int max_val = AD9647_MAX_TEST_POINTS, val;
+	DECLARE_BITMAP(err_map, AD9647_MAX_TEST_POINTS * 2);
+	unsigned int test_points = BITS_PER_TYPE(err_map) / 2;
 	unsigned long sample_rate = clk_get_rate(st->clk);
-	bool inv_range = false;
+	bool invert = false, stat;
+	unsigned int val;
 	int ret;
+	u32 adc_m, adc_o;
 
 	ret = ad9647_calibrate_prepare(st);
 	if (ret)
 		return ret;
 
+	adc_m = ad9467_spi_read(st->spi, AN877_ADC_REG_TEST_IO);
+	adc_o = ad9467_spi_read(st->spi, AN877_ADC_REG_OUTPUT_MODE);
+	dev_info(&st->spi->dev, "adc_m:%02X, adc_o:%02X", adc_m, adc_o);
+
 retune:
-	if (st->info->has_dco) {
-		unsigned int phase = AN877_ADC_OUTPUT_EVEN_ODD_MODE_EN;
+	ret = ad9647_calibrate_polarity_set(st, invert);
+	if (ret)
+		return ret;
 
-		if (inv_range)
-			phase |= AN877_ADC_INVERT_DCO_CLK;
-
-		ret = ad9467_spi_write(st->spi, AN877_ADC_REG_OUTPUT_PHASE,
-				       phase);
-		if (ret)
-			return ret;
-	} else {
-		int trigger;
-
-		if (inv_range)
-			trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING;
-		else
-			trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
-
-		ret = iio_backend_data_sample_trigger(st->back, trigger);
-		if (ret)
-			return ret;
-	}
-
-	for (val = 0; val < max_val; val++) {
+	for (val = 0; val < test_points; val++) {
 		ret = ad9467_calibrate_apply(st, val);
 		if (ret)
 			return ret;
 
-		ret = ad9467_calibrate_status_check(st);
+		ret = ad9467_calibrate_status_check(st, &stat);
 		if (ret < 0)
 			return ret;
 
-		err_field[val + inv_range * max_val] = ret;
+		__assign_bit(val + invert * test_points, err_map, stat);
 	}
 
-	if (!inv_range) {
-		inv_range = true;
+	if (!invert) {
+		invert = true;
 		goto retune;
 	}
 
-	ret = ad9467_find_optimal_point(err_field, sizeof(err_field), &val);
+	ret = ad9467_find_optimal_point(err_map, BITS_PER_TYPE(err_map), &val);
 	if (ret < 0)
 		return ret;
 
-	if (val < max_val) {
+	if (val < BITS_PER_TYPE(err_map) / 2) {
 		int trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
 
 		if (st->info->has_dco)
@@ -557,29 +623,29 @@ retune:
 		if (ret)
 			return ret;
 
-		inv_range = false;
+		invert = false;
 	} else {
 		/*
-		 * inv_range = true is the last test to run. Hence, there's no
+		 * polarity inverted is the last test to run. Hence, there's no
 		 * need to re-do any configuration
 		 */
-		val -= max_val + 1;
+		val -= BITS_PER_TYPE(err_map) / 2;
 	}
 
 	if (st->info->has_dco)
 		dev_dbg(&st->spi->dev,
-			"%s DCO 0x%X CLK %lu Hz\n", inv_range ? "INVERT" : "",
+			"%s DCO 0x%X CLK %lu Hz\n", invert ? "INVERT" : "",
 			 val, sample_rate);
 	else
 		dev_dbg(&st->spi->dev,
-			"%s IDELAY 0x%x\n", inv_range ? "INVERT" : "", val);
+			"%s IDELAY 0x%x\n", invert ? "INVERT" : "", val);
 
-	ret = ad9647_calibrate_stop(st);
+	ret = ad9467_calibrate_apply(st, val);
 	if (ret)
 		return ret;
 
 	/* finally apply the optimal value */
-	return ad9467_calibrate_apply(st, val);
+	return ad9647_calibrate_stop(st);
 }
 
 static int ad9467_read_raw(struct iio_dev *indio_dev,
@@ -598,56 +664,6 @@ static int ad9467_read_raw(struct iio_dev *indio_dev,
 	default:
 		return -EINVAL;
 	}
-}
-
-static int ad9467_outputmode_set(struct spi_device *spi, unsigned int mode)
-{
-	int ret;
-
-	ret = ad9467_spi_write(spi, AN877_ADC_REG_OUTPUT_MODE, mode);
-	if (ret < 0)
-		return ret;
-
-	return ad9467_spi_write(spi, AN877_ADC_REG_TRANSFER,
-				AN877_ADC_TRANSFER_SYNC);
-}
-
-static int ad9467_setup(struct ad9467_state *st)
-{
-	struct iio_backend_data_fmt data = {
-		.sign_extend = true,
-		.enable = true,
-	};
-	unsigned int c, mode;
-	int ret;
-
-	ret = ad9467_outputmode_set(st->spi, st->info->default_output_mode);
-	if (ret)
-		return ret;
-
-	data.enable = false;
-	for (c = 0; c < st->info->num_channels; c++) {
-		ret = iio_backend_data_format_set(st->back, c, &data);
-		if (ret)
-			return ret;
-	}
-
-	ret = ad9467_calibrate(st);
-	if (ret)
-		return ret;
-
-	mode = st->info->default_output_mode | AN877_ADC_OUTPUT_MODE_TWOS_COMPLEMENT;
-	ret = ad9467_outputmode_set(st->spi, mode);
-	if (ret)
-		return ret;
-
-	for (c = 0; c < st->info->num_channels; c++) {
-		ret = iio_backend_data_format_set(st->back, c, &data);
-		if (ret)
-			return ret;
-	}
-
-	return 0;
 }
 
 static int ad9467_write_raw(struct iio_dev *indio_dev,
@@ -680,7 +696,7 @@ static int ad9467_write_raw(struct iio_dev *indio_dev,
 			return ret;
 		}
 
-		ret = ad9467_setup(st);
+		ret = ad9467_calibrate(st);
 		iio_device_release_direct_mode(indio_dev);
 		return ret;
 	default:
@@ -869,7 +885,7 @@ static int ad9467_probe(struct spi_device *spi)
 	if (ret)
 		return ret;
 
-	ret = ad9467_setup(st);
+	ret = ad9467_calibrate(st);
 	if (ret)
 		return ret;
 
