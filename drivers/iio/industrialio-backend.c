@@ -206,9 +206,9 @@ EXPORT_SYMBOL_NS_GPL(iio_backend_chan_status, IIO_BACKEND);
 
 /* need to ask Adrian what's the units for the delay */
 int iio_backend_iodelay_set(struct iio_backend *back, unsigned int lane,
-			    unsigned int delay_ns)
+			    unsigned int tap)
 {
-	return iio_backend_op_call(back, iodelay_set, lane, delay_ns);
+	return iio_backend_op_call(back, iodelay_set, lane, tap);
 }
 EXPORT_SYMBOL_NS_GPL(iio_backend_iodelay_set, IIO_BACKEND);
 

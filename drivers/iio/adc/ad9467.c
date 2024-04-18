@@ -333,15 +333,19 @@ static int ad9467_set_scale(struct ad9467_state *st, int val, int val2)
 	return -EINVAL;
 }
 
-static void ad9467_dump_table(const unsigned long *err_map, unsigned int size)
+static void ad9467_dump_table(const unsigned long *err_map, unsigned int size,
+			      bool invert)
 {
 #ifdef DEBUG
 	unsigned int bit;
 
 	pr_debug("Dump calibration table:\n");
 	for (bit = 0; bit < size; bit++) {
-		if (bit == size / 2)
+		if (bit == size / 2) {
+			if (!invert)
+				break;
 			pr_cont("\n");
+		}
 
 		pr_cont("%c", test_bit(bit, err_map) ? 'x' : 'o');
 	}
@@ -434,79 +438,27 @@ static bool ad9467_calibrate_status_check(const struct ad9467_state *st,
 	return 0;
 }
 
-static int ad9467_find_optimal_point(const unsigned long *err_map,
-				     unsigned int size, unsigned int *val)
+static unsigned int ad9467_find_optimal_point(const unsigned long *err_map,
+					      unsigned int start,
+					      unsigned int nbits,
+					      unsigned int *val)
 {
-	unsigned int point, last_point, cnt, start;
+	unsigned int bit = start, end, start_cnt, cnt = 0;
 
-	ad9467_dump_table(err_map, size);
-
-	if (bitmap_full(err_map, size))
-		return -EIO;
-
-	/* first let's look on the non inverted */
-	for_each_clear_bitrange(point, last_point, err_map, size / 2) {
-		pr_info("Got subset [%u %u]\n", point, last_point);
-		if (last_point - point > cnt) {
-			cnt = last_point - point;
-			start = point;
+	for_each_clear_bitrange_from(bit, end, err_map, nbits + start) {
+		pr_info("start(%u) Got subset [%u %u]\n", start, bit, end);
+		if (end - bit > cnt) {
+			cnt = end - bit;
+			start_cnt = bit;
 		}
 	}
 
-	/* look for the inverted polarity now */
-	pr_info("Point now is %u %u\n", point, last_point);
-	for_each_clear_bitrange_from(point, last_point, err_map, size) {
-		pr_info("[INVERTED]: Got subset [%u %u]\n", point, last_point);
-		if (last_point - point > cnt) {
-			cnt = last_point - point;
-			start = point;
-		}
-	}
+	if (cnt)
+		*val = start_cnt + cnt / 2;
 
-	*val = start + cnt / 2;
-	pr_info("Got val %u\n", *val);
-
-	return 0;
+	return cnt;
 }
 
-/*
-static int ad9467_find_optimal_point(const unsigned char *err_field,
-				     unsigned int size, unsigned int *point)
-{
-	unsigned int val, cnt = 0, max_cnt = 0, max_start = 0;
-	int start = -1;
-
-	ad9467_dump_table(err_field, size, *point);
-
-	for (val = 0; val < size; val++) {
-		if (!err_field[val]) {
-			if (start == -1)
-				start = val;
-			cnt++;
-		} else {
-			if (cnt > max_cnt) {
-				max_cnt = cnt;
-				max_start = start;
-			}
-
-			start = -1;
-			cnt = 0;
-		}
-	}
-
-	if (cnt > max_cnt) {
-		max_cnt = cnt;
-		max_start = start;
-	}
-
-	if (!max_cnt)
-		return -EIO;
-
-	*point = max_start + max_cnt / 2;
-
-	return 0;
-}
-*/
 static int ad9467_calibrate_apply(const struct ad9467_state *st,
 				  unsigned int val)
 {
@@ -570,28 +522,27 @@ static int ad9647_calibrate_stop(const struct ad9467_state *st)
 static int ad9467_calibrate(const struct ad9467_state *st)
 {
 	DECLARE_BITMAP(err_map, AD9647_MAX_TEST_POINTS * 2);
-	unsigned int test_points = BITS_PER_TYPE(err_map) / 2;
+	unsigned int point, val, inv_val, cnt, inv_cnt = 0;
+	/*
+	 * Half of the bitmap is for the inverted signal. The number of test
+	 * points is the same though...
+	 */
+	unsigned int test_points = AD9647_MAX_TEST_POINTS;
 	unsigned long sample_rate = clk_get_rate(st->clk);
+	struct device *dev = &st->spi->dev;
 	bool invert = false, stat;
-	unsigned int val;
 	int ret;
-	u32 adc_m, adc_o;
 
 	ret = ad9647_calibrate_prepare(st);
 	if (ret)
 		return ret;
-
-	adc_m = ad9467_spi_read(st->spi, AN877_ADC_REG_TEST_IO);
-	adc_o = ad9467_spi_read(st->spi, AN877_ADC_REG_OUTPUT_MODE);
-	dev_info(&st->spi->dev, "adc_m:%02X, adc_o:%02X", adc_m, adc_o);
-
 retune:
 	ret = ad9647_calibrate_polarity_set(st, invert);
 	if (ret)
 		return ret;
 
-	for (val = 0; val < test_points; val++) {
-		ret = ad9467_calibrate_apply(st, val);
+	for (point = 0; point < test_points; point++) {
+		ret = ad9467_calibrate_apply(st, point);
 		if (ret)
 			return ret;
 
@@ -599,46 +550,47 @@ retune:
 		if (ret < 0)
 			return ret;
 
-		__assign_bit(val + invert * test_points, err_map, stat);
+		__assign_bit(point + invert * test_points, err_map, stat);
 	}
 
 	if (!invert) {
-		invert = true;
-		goto retune;
+		cnt = ad9467_find_optimal_point(err_map, 0, test_points, &val);
+		/*
+		 * We're happy if we find, at least, three good test points in
+		 * a row.
+		 */
+		if (cnt < 3) {
+			invert = true;
+			goto retune;
+		}
+	} else {
+		inv_cnt = ad9467_find_optimal_point(err_map, test_points,
+						    test_points, &inv_val);
+		if (!inv_cnt && !cnt)
+			return -EIO;
 	}
 
-	ret = ad9467_find_optimal_point(err_map, BITS_PER_TYPE(err_map), &val);
-	if (ret < 0)
-		return ret;
+	ad9467_dump_table(err_map, BITS_PER_TYPE(err_map), invert);
 
-	if (val < BITS_PER_TYPE(err_map) / 2) {
-		int trigger = IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING;
-
-		if (st->info->has_dco)
-			ret = ad9467_spi_write(st->spi,
-					       AN877_ADC_REG_OUTPUT_PHASE,
-					       AN877_ADC_OUTPUT_EVEN_ODD_MODE_EN);
-		else
-			ret = iio_backend_data_sample_trigger(st->back, trigger);
+	if (inv_cnt < cnt) {
+		ret = ad9647_calibrate_polarity_set(st, false);
 		if (ret)
 			return ret;
-
-		invert = false;
 	} else {
 		/*
 		 * polarity inverted is the last test to run. Hence, there's no
-		 * need to re-do any configuration
+		 * need to re-do any configuration. We just need to "normalize"
+		 * the selected value.
 		 */
-		val -= BITS_PER_TYPE(err_map) / 2;
+		val = inv_val - test_points;
 	}
 
 	if (st->info->has_dco)
-		dev_dbg(&st->spi->dev,
-			"%s DCO 0x%X CLK %lu Hz\n", invert ? "INVERT" : "",
-			 val, sample_rate);
+		dev_dbg(dev, "%sDCO 0x%X CLK %lu Hz\n", inv_cnt >= cnt ? "INVERT " : "",
+			val, sample_rate);
 	else
-		dev_dbg(&st->spi->dev,
-			"%s IDELAY 0x%x\n", invert ? "INVERT" : "", val);
+		dev_dbg(dev, "%sIDELAY 0x%x\n", inv_cnt >= cnt ? "INVERT " : "",
+			val);
 
 	ret = ad9467_calibrate_apply(st, val);
 	if (ret)

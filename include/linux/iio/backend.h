@@ -70,7 +70,7 @@ struct iio_backend_ops {
 	int (*chan_status)(struct iio_backend *back, unsigned int chan,
 			   struct iio_backend_chan_status *status);
 	int (*iodelay_set)(struct iio_backend *back, unsigned int chan,
-			   unsigned int delay_ns);
+			   unsigned int tap);
 	int (*data_sample_trigger)(struct iio_backend *back,
 				   enum iio_backend_sample_trigger trigger);
 	struct iio_buffer *(*request_buffer)(struct iio_backend *back,
@@ -90,7 +90,7 @@ int iio_backend_test_pattern_set(struct iio_backend *back,
 int iio_backend_chan_status(struct iio_backend *back, unsigned int chan,
 			    struct iio_backend_chan_status *status);
 int iio_backend_iodelay_set(struct iio_backend *back, unsigned int lane,
-			    unsigned int delay_ns);
+			    unsigned int tap);
 int iio_backend_data_sample_trigger(struct iio_backend *back,
 				    enum iio_backend_sample_trigger trigger);
 int devm_iio_backend_request_buffer(struct device *dev,

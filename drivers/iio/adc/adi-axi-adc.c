@@ -126,37 +126,31 @@ static int axi_adc_data_sample_trigger(struct iio_backend *back,
 				       enum iio_backend_sample_trigger trigger)
 {
 	struct adi_axi_adc_state *st = iio_backend_get_priv(back);
-	int ret;
-	u32 val;
 
 	if (trigger == IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING)
-		ret = regmap_clear_bits(st->regmap, ADI_AXI_ADC_REG_CTRL,
+		return regmap_clear_bits(st->regmap, ADI_AXI_ADC_REG_CTRL,
 					 ADI_AXI_ADC_CTRL_DDR_EDGESEL_MASK);
 	if (trigger == IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING)
-		ret = regmap_set_bits(st->regmap, ADI_AXI_ADC_REG_CTRL,
+		return regmap_set_bits(st->regmap, ADI_AXI_ADC_REG_CTRL,
 				       ADI_AXI_ADC_CTRL_DDR_EDGESEL_MASK);
 
-	regmap_read(st->regmap, ADI_AXI_ADC_REG_CTRL, &val);
-	dev_info(st->dev, "Set sample edge:%u. Readback:%08X\n", trigger,
-		 val);
-
-	return ret;
+	return -EINVAL;
 }
 
 static int axi_adc_iodelays_set(struct iio_backend *back, unsigned int lane,
-				unsigned int delay_ns)
+				unsigned int tap)
 {
 	struct adi_axi_adc_state *st = iio_backend_get_priv(back);
 	int ret;
 	u32 val;
 
-	if (delay_ns > FIELD_MAX(AXI_ADC_DELAY_CTRL_MASK))
+	if (tap > FIELD_MAX(AXI_ADC_DELAY_CTRL_MASK))
 		return -EINVAL;
 	if (lane > ADI_AXI_ADC_MAX_IO_NUM_LANES)
 		return -EINVAL;
 
 	guard(mutex)(&st->lock);
-	ret = regmap_write(st->regmap, ADI_AXI_ADC_REG_DELAY(lane), delay_ns);
+	ret = regmap_write(st->regmap, ADI_AXI_ADC_REG_DELAY(lane), tap);
 	if (ret)
 		return ret;
 	/*
@@ -164,8 +158,6 @@ static int axi_adc_iodelays_set(struct iio_backend *back, unsigned int lane,
 	 * delay_clk.
 	 */
 	ret = regmap_read(st->regmap, ADI_AXI_ADC_REG_DELAY(lane), &val);
-	dev_info(st->dev, "Set delay readback %u, reg:%08X\n", val,
-		 ADI_AXI_ADC_REG_DELAY(lane));
 	if (ret)
 		return ret;
 	if (val == U32_MAX)
@@ -179,22 +171,16 @@ static int axi_adc_test_pattern_set(struct iio_backend *back,
 				    enum iio_backend_test_pattern pattern)
 {
 	struct adi_axi_adc_state *st = iio_backend_get_priv(back);
-	int ret;
-	u32 val;
 
 	switch (pattern) {
 	case IIO_BACKEND_ADI_PRBS_9A:
-		ret = regmap_update_bits(st->regmap, ADI_AXI_ADC_REG_CHAN_CTRL_3(chan),
+		return regmap_update_bits(st->regmap, ADI_AXI_ADC_REG_CHAN_CTRL_3(chan),
 					  ADI_AXI_ADC_CHAN_PN_SEL_MASK,
 					  FIELD_PREP(ADI_AXI_ADC_CHAN_PN_SEL_MASK, 0));
 		break;
 	default:
 		return -EINVAL;
 	}
-
-	regmap_read(st->regmap, ADI_AXI_ADC_REG_CHAN_CTRL_3(chan), &val);
-	dev_info(st->dev, "Pattern:%08X\n", val);
-	return ret;
 }
 
 static int axi_adc_chan_status(struct iio_backend *back, unsigned int chan,
@@ -218,8 +204,6 @@ static int axi_adc_chan_status(struct iio_backend *back, unsigned int chan,
 	if (ret)
 		return ret;
 
-	dev_info(st->dev, "chan:%u status:%02X\n", chan, val);
-
 	if (ADI_AXI_ADC_CHAN_STAT_PN_MASK & val)
 		status->errors = true;
 
@@ -229,14 +213,9 @@ static int axi_adc_chan_status(struct iio_backend *back, unsigned int chan,
 static int axi_adc_chan_enable(struct iio_backend *back, unsigned int chan)
 {
 	struct adi_axi_adc_state *st = iio_backend_get_priv(back);
-	int ret;
-	u32 val;
 
-	ret = regmap_set_bits(st->regmap, ADI_AXI_REG_CHAN_CTRL(chan),
+	return regmap_set_bits(st->regmap, ADI_AXI_REG_CHAN_CTRL(chan),
 			       ADI_AXI_REG_CHAN_CTRL_ENABLE);
-	regmap_read(st->regmap, ADI_AXI_REG_CHAN_CTRL(chan), &val);
-	dev_info(st->dev, "chan ctrl:%08X\n", val);
-	return ret;
 }
 
 static int axi_adc_chan_disable(struct iio_backend *back, unsigned int chan)
