@@ -22,6 +22,19 @@ enum iio_backend_data_source {
 	IIO_BACKEND_DATA_SOURCE_MAX
 };
 
+/* vendor specific from 32 */
+enum iio_backend_test_pattern {
+	/* modified prbs9 */
+	IIO_BACKEND_ADI_PRBS_9A = 32,
+	IIO_BACKEND_TEST_PATTERN_MAX
+};
+
+enum iio_backend_sample_trigger {
+	IIO_BACKEND_SAMPLE_TRIGGER_EDGE_FALLING,
+	IIO_BACKEND_SAMPLE_TRIGGER_EDGE_RISING,
+	IIO_BACKEND_SAMPLE_TRIGGER_MAX
+};
+
 /**
  * IIO_BACKEND_EX_INFO - Helper for an IIO extended channel attribute
  * @_name:	Attribute name
@@ -58,6 +71,10 @@ struct iio_backend_data_fmt {
  * @data_format_set:	Configure the data format for a specific channel.
  * @data_source_set:	Configure the data source for a specific channel.
  * @set_sample_rate:	Configure the sampling rate for a specific channel.
+ * @test_pattern_set:	Configure a test pattern.
+ * @chan_status:	Get the channel status.
+ * @iodelay_set:	Set digital I/O delay.
+ * @data_sample_trigger:	Control when to sample data.
  * @request_buffer:	Request an IIO buffer.
  * @free_buffer:	Free an IIO buffer.
  * @extend_chan_spec:	Extend an IIO channel.
@@ -75,6 +92,15 @@ struct iio_backend_ops {
 			       enum iio_backend_data_source data);
 	int (*set_sample_rate)(struct iio_backend *back, unsigned int chan,
 			       u64 sample_rate_hz);
+	int (*test_pattern_set)(struct iio_backend *back,
+				unsigned int chan,
+				enum iio_backend_test_pattern pattern);
+	int (*chan_status)(struct iio_backend *back, unsigned int chan,
+			   bool *error);
+	int (*iodelay_set)(struct iio_backend *back, unsigned int chan,
+			   unsigned int tap);
+	int (*data_sample_trigger)(struct iio_backend *back,
+				   enum iio_backend_sample_trigger trigger);
 	struct iio_buffer *(*request_buffer)(struct iio_backend *back,
 					     struct iio_dev *indio_dev);
 	void (*free_buffer)(struct iio_backend *back,
@@ -97,6 +123,15 @@ int iio_backend_data_source_set(struct iio_backend *back, unsigned int chan,
 				enum iio_backend_data_source data);
 int iio_backend_set_sampling_freq(struct iio_backend *back, unsigned int chan,
 				  u64 sample_rate_hz);
+int iio_backend_test_pattern_set(struct iio_backend *back,
+				 unsigned int chan,
+				 enum iio_backend_test_pattern pattern);
+int iio_backend_chan_status(struct iio_backend *back, unsigned int chan,
+			    bool *error);
+int iio_backend_iodelay_set(struct iio_backend *back, unsigned int lane,
+			    unsigned int tap);
+int iio_backend_data_sample_trigger(struct iio_backend *back,
+				    enum iio_backend_sample_trigger trigger);
 int devm_iio_backend_request_buffer(struct device *dev,
 				    struct iio_backend *back,
 				    struct iio_dev *indio_dev);
