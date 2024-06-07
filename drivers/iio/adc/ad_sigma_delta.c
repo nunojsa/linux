@@ -321,6 +321,7 @@ out:
 
 	sigma_delta->keep_cs_asserted = false;
 	ad_sigma_delta_set_mode(sigma_delta, AD_SD_MODE_IDLE);
+	ad_sigma_delta_disable_one(sigma_delta, chan->address);
 	sigma_delta->bus_locked = false;
 	spi_bus_unlock(sigma_delta->spi->controller);
 	iio_device_release_direct_mode(indio_dev);
@@ -669,6 +670,11 @@ int ad_sd_init(struct ad_sigma_delta *sigma_delta, struct iio_dev *indio_dev,
 
 		if (!info->disable_all) {
 			dev_err(&spi->dev, "ad_sigma_delta_info lacks disable_all().\n");
+			return -EINVAL;
+		}
+
+		if (!info->disable_one) {
+			dev_err(&spi->dev, "ad_sigma_delta_info lacks disable_one().\n");
 			return -EINVAL;
 		}
 	}
