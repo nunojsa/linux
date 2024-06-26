@@ -32,6 +32,7 @@
 #define dev_fmt(fmt) "iio-backend: " fmt
 
 #include <linux/cleanup.h>
+#include <linux/debugfs.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/errno.h>
@@ -40,10 +41,13 @@
 #include <linux/mutex.h>
 #include <linux/property.h>
 #include <linux/slab.h>
+#include <linux/stringify.h>
 #include <linux/types.h>
 
 #include <linux/iio/backend.h>
 #include <linux/iio/iio.h>
+
+#define IIO_BACKEND_DEFAULT_NAME	"backend"
 
 struct iio_backend {
 	struct list_head entry;
@@ -52,6 +56,8 @@ struct iio_backend {
 	struct device *dev;
 	struct module *owner;
 	void *priv;
+	const char *name;
+	unsigned int cached_reg_addr;
 };
 
 /*
@@ -115,6 +121,111 @@ static DEFINE_MUTEX(iio_back_lock);
 		dev_info(__back->dev, "Op(%s) not implemented\n",	\
 			__stringify(op));			\
 }
+
+static ssize_t iio_backend_debugfs_read_reg(struct file *file,
+					    char __user *userbuf,
+					    size_t count, loff_t *ppos)
+{
+	struct iio_backend *back = file->private_data;
+	char read_buf[20];
+	unsigned int val;
+	int ret, len;
+
+	ret = iio_backend_op_call(back, debugfs_reg_access,
+				  back->cached_reg_addr, 0, &val);
+	if (ret)
+		return ret;
+
+	len = scnprintf(read_buf, sizeof(read_buf), "0x%X\n", val);
+
+	return simple_read_from_buffer(userbuf, count, ppos, read_buf, len);
+}
+
+static ssize_t iio_backend_debugfs_write_reg(struct file *file,
+					     const char __user *userbuf,
+					     size_t count, loff_t *ppos)
+{
+	struct iio_backend *back = file->private_data;
+	unsigned int val;
+	char buf[80];
+	ssize_t rc;
+	int ret;
+
+	rc = simple_write_to_buffer(buf, sizeof(buf), ppos, userbuf, count);
+	if (rc < 0)
+		return rc;
+
+	ret = sscanf(buf, "%i %i", &back->cached_reg_addr, &val);
+
+	switch (ret) {
+	case 1:
+		return count;
+	case 2:
+		ret = iio_backend_op_call(back, debugfs_reg_access,
+					  back->cached_reg_addr, val, NULL);
+		if (ret)
+			return ret;
+		return count;
+	default:
+		return -EINVAL;
+	}
+}
+
+static const struct file_operations iio_backend_debugfs_reg_fops = {
+	.open = simple_open,
+	.read = iio_backend_debugfs_read_reg,
+	.write = iio_backend_debugfs_write_reg,
+};
+
+/**
+ * iio_backend_debugfs_add - Add debugfs interfaces for Backends
+ * @back: Backend device
+ * @indio_dev: IIO device
+ */
+void iio_backend_debugfs_add(struct iio_backend *back,
+			     struct iio_dev *indio_dev)
+{
+	struct dentry *d = iio_get_debugfs_dentry(indio_dev);
+	char attr_name[128];
+
+	if (!IS_ENABLED(CONFIG_DEBUG_FS))
+		return;
+	if (!back->ops->debugfs_reg_access || !d)
+		return;
+
+	snprintf(attr_name, sizeof(attr_name), "%s_direct_reg_access",
+		 back->name);
+
+	debugfs_create_file(attr_name, 0644, d, back,
+			    &iio_backend_debugfs_reg_fops);
+}
+EXPORT_SYMBOL_NS_GPL(iio_backend_debugfs_add, IIO_BACKEND);
+
+/**
+ * iio_backend_debugfs_print_chan_status - Print channel status
+ * @back: Backend device
+ * @chan: Channel number
+ * @buf: Buffer where to print the status
+ * @len: Available space
+ *
+ * One usecase where this is useful is for testing test tones in a digital
+ * interface and "ask" the backend to dump more details on why a test tone might
+ * have errors.
+ *
+ * RETURNS:
+ * Number of copied bytes on success, negative error code on failure.
+ */
+ssize_t iio_backend_debugfs_print_chan_status(struct iio_backend *back,
+					      unsigned int chan, char *buf,
+					      size_t len)
+{
+	if (!IS_ENABLED(CONFIG_DEBUG_FS))
+		return -ENODEV;
+
+	return iio_backend_op_call(back, debugfs_print_chan_status, chan, buf,
+				   len);
+}
+EXPORT_SYMBOL_NS_GPL(iio_backend_debugfs_print_chan_status, IIO_BACKEND);
 
 /**
  * iio_backend_chan_enable - Enable a backend channel
@@ -575,6 +686,11 @@ struct iio_backend *devm_iio_backend_get(struct device *dev, const char *name)
 		ret = __devm_iio_backend_get(dev, back);
 		if (ret)
 			return ERR_PTR(ret);
+
+		if (name)
+			back->name = name;
+		else
+			back->name = IIO_BACKEND_DEFAULT_NAME;
 
 		return back;
 	}

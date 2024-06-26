@@ -9,6 +9,7 @@ struct fwnode_handle;
 struct iio_backend;
 struct device;
 struct iio_dev;
+struct dentry *d;
 
 enum iio_backend_data_type {
 	IIO_BACKEND_TWOS_COMPLEMENT,
@@ -21,6 +22,8 @@ enum iio_backend_data_source {
 	IIO_BACKEND_EXTERNAL,
 	IIO_BACKEND_DATA_SOURCE_MAX
 };
+
+#define iio_backend_debugfs_ptr(ptr)	PTR_IF(IS_ENABLED(CONFIG_DEBUG_FS), ptr)
 
 /**
  * IIO_BACKEND_EX_INFO - Helper for an IIO extended channel attribute
@@ -54,6 +57,8 @@ enum iio_backend_test_pattern {
 	IIO_BACKEND_NO_TEST_PATTERN,
 	/* modified prbs9 */
 	IIO_BACKEND_ADI_PRBS_9A = 32,
+	/* modified prbs23 */
+	IIO_BACKEND_ADI_PRBS_23A = 32,
 	IIO_BACKEND_TEST_PATTERN_MAX
 };
 
@@ -81,6 +86,8 @@ enum iio_backend_sample_trigger {
  * @extend_chan_spec: Extend an IIO channel.
  * @ext_info_set: Extended info setter.
  * @ext_info_get: Extended info getter.
+ * @debugfs_print_chan_status: Print channel status into a buffer.
+ * @debugfs_reg_access: Read or write register value of backend.
  **/
 struct iio_backend_ops {
 	int (*enable)(struct iio_backend *back);
@@ -113,6 +120,11 @@ struct iio_backend_ops {
 			    const char *buf, size_t len);
 	int (*ext_info_get)(struct iio_backend *back, uintptr_t private,
 			    const struct iio_chan_spec *chan, char *buf);
+	int (*debugfs_print_chan_status)(struct iio_backend *back,
+					 unsigned int chan, char *buf,
+					 size_t len);
+	int (*debugfs_reg_access)(struct iio_backend *back, unsigned int reg,
+				  unsigned int writeval, unsigned int *readval);
 };
 
 int iio_backend_chan_enable(struct iio_backend *back, unsigned int chan);
@@ -152,5 +164,9 @@ __devm_iio_backend_get_from_fwnode_lookup(struct device *dev,
 
 int devm_iio_backend_register(struct device *dev,
 			      const struct iio_backend_ops *ops, void *priv);
-
+ssize_t iio_backend_debugfs_print_chan_status(struct iio_backend *back,
+					      unsigned int chan, char *buf,
+					      size_t len);
+void iio_backend_debugfs_add(struct iio_backend *back,
+			     struct iio_dev *indio_dev);
 #endif
