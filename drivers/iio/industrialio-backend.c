@@ -118,7 +118,7 @@ static DEFINE_MUTEX(iio_back_lock);
 	if (!__ret)						\
 		__back->ops->op(__back, ##args);		\
 	else							\
-		dev_info(__back->dev, "Op(%s) not implemented\n",	\
+		dev_dbg(__back->dev, "Op(%s) not implemented\n",\
 			__stringify(op));			\
 }
 

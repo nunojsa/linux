@@ -104,11 +104,11 @@ static int axi_adc_enable(struct iio_backend *back)
 	 * designs really use it but if they don't we still get the lock bit
 	 * set. So let's do it all the time so the code is generic.
 	 */
-	ret = regmap_read_poll_timeout(st->regmap, ADI_AXI_ADC_REG_DRP_STATUS,
-				       __val, __val & ADI_AXI_ADC_DRP_LOCKED,
-				       100, 1000);
-	if (ret)
-		return ret;
+	//ret = regmap_read_poll_timeout(st->regmap, ADI_AXI_ADC_REG_DRP_STATUS,
+	//			       __val, __val & ADI_AXI_ADC_DRP_LOCKED,
+	//			       100, 1000);
+	//if (ret)
+	//	return ret;
 
 	return regmap_set_bits(st->regmap, ADI_AXI_REG_RSTN,
 			       ADI_AXI_REG_RSTN_RSTN | ADI_AXI_REG_RSTN_MMCM_RSTN);
@@ -203,6 +203,10 @@ static int axi_adc_test_pattern_set(struct iio_backend *back,
 		return regmap_update_bits(st->regmap, ADI_AXI_ADC_REG_CHAN_CTRL_3(chan),
 					  ADI_AXI_ADC_CHAN_PN_SEL_MASK,
 					  FIELD_PREP(ADI_AXI_ADC_CHAN_PN_SEL_MASK, 0));
+	case IIO_BACKEND_ADI_PRBS_23A:
+		return regmap_update_bits(st->regmap, ADI_AXI_ADC_REG_CHAN_CTRL_3(chan),
+					  ADI_AXI_ADC_CHAN_PN_SEL_MASK,
+					  FIELD_PREP(ADI_AXI_ADC_CHAN_PN_SEL_MASK, 1));
 	default:
 		return -EINVAL;
 	}
@@ -391,7 +395,7 @@ static int adi_axi_adc_probe(struct platform_device *pdev)
 			ADI_AXI_PCORE_VER_MAJOR(ver),
 			ADI_AXI_PCORE_VER_MINOR(ver),
 			ADI_AXI_PCORE_VER_PATCH(ver));
-		return -ENODEV;
+		//return -ENODEV;
 	}
 
 	ret = devm_iio_backend_register(&pdev->dev, &adi_axi_adc_generic, st);

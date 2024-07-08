@@ -328,8 +328,8 @@ static const char * const ad9467_test_modes[] = {
 	[AN877_ADC_TESTMODE_POS_FULLSCALE] = "pos_fullscale",
 	[AN877_ADC_TESTMODE_NEG_FULLSCALE] = "neg_fullscale",
 	[AN877_ADC_TESTMODE_ALT_CHECKERBOARD] = "checkerboard",
-	[AN877_ADC_TESTMODE_PN23_SEQ] = "pn_long",
-	[AN877_ADC_TESTMODE_PN9_SEQ] = "pn_short",
+	[AN877_ADC_TESTMODE_PN23_SEQ] = "prbs23",
+	[AN877_ADC_TESTMODE_PN9_SEQ] = "prbs9",
 	[AN877_ADC_TESTMODE_ONE_ZERO_TOGGLE] = "one_zero_toggle",
 	[AN877_ADC_TESTMODE_USER] = "user",
 	[AN877_ADC_TESTMODE_BIT_TOGGLE] = "bit_toggle",
@@ -337,7 +337,6 @@ static const char * const ad9467_test_modes[] = {
 	[AN877_ADC_TESTMODE_ONE_BIT_HIGH] = "one_bit_high",
 	[AN877_ADC_TESTMODE_MIXED_BIT_FREQUENCY] = "mixed_bit_frequency",
 	[AN877_ADC_TESTMODE_RAMP] = "ramp",
-
 };
 
 static const struct ad9467_chip_info ad9467_chip_tbl = {
@@ -402,7 +401,7 @@ static const struct ad9467_chip_info ad9643_chip_tbl = {
 	.test_points = AD9647_MAX_TEST_POINTS,
 	.test_mask = BIT(AN877_ADC_TESTMODE_RAMP) |
 		GENMASK(AN877_ADC_TESTMODE_MIXED_BIT_FREQUENCY, AN877_ADC_TESTMODE_OFF),
-	.test_mask_len = AN877_ADC_TESTMODE_RAMP - 1,
+	.test_mask_len = AN877_ADC_TESTMODE_RAMP + 1,
 	.vref_mask = AD9643_REG_VREF_MASK,
 	.has_dco = true,
 	.has_dco_invert = true,
@@ -543,8 +542,8 @@ static int ad9467_testmode_set(struct ad9467_state *st, unsigned int chan,
 }
 
 static int ad9467_backend_testmode_on(struct ad9467_state *st,
-					  unsigned int chan,
-					  enum iio_backend_test_pattern pattern)
+				      unsigned int chan,
+				      enum iio_backend_test_pattern pattern)
 {
 	struct iio_backend_data_fmt data = {
 		.enable = false,
@@ -1036,7 +1035,7 @@ static ssize_t ad9467_chan_test_mode_write(struct file *file,
 
 	ret = simple_write_to_buffer(test_mode, sizeof(test_mode) - 1, ppos,
 				     userbuf, count);
-	if (ret)
+	if (ret < 0)
 		return ret;
 
 	for_each_set_bit(mode, &st->info->test_mask, st->info->test_mask_len) {
@@ -1044,6 +1043,8 @@ static ssize_t ad9467_chan_test_mode_write(struct file *file,
 			break;
 	}
 
+	dev_info(&st->spi->dev, "Mode=%u, str:%s, msk:%08lX, msk_len=%u\n",
+		 mode, test_mode, st->info->test_mask, st->info->test_mask_len);
 	if (mode == st->info->test_mask_len)
 		return -EINVAL;
 
