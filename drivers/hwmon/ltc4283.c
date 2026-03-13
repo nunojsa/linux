@@ -494,7 +494,7 @@ static int ltc4283_read_power(struct ltc4283_hwmon *st, u32 attr, long *val)
 static int ltc4283_read_energy(struct ltc4283_hwmon *st, u32 attr, s64 *val)
 {
 	u64 temp = LTC4283_ADC1_FS_uV * LTC4283_ADC2_FS_mV, energy, temp_2;
-	u8 raw[8];
+	u8 raw[8] = {};
 	int ret;
 
 	if (!st->energy_en)
@@ -563,9 +563,7 @@ static int ltc4283_write_power_byte(const struct ltc4283_hwmon *st, u32 reg,
 	u64 temp = (u64)LTC4283_ADC1_FS_uV * LTC4283_ADC2_FS_mV * DECA * MILLI;
 	u32 __raw;
 
-	if (val > st->power_max)
-		val = st->power_max;
-
+	clamp_val(val, 0, st->power_max);
 	__raw = DIV64_U64_ROUND_CLOSEST(val * BIT_ULL(8) * st->rsense, temp);
 
 	return regmap_write(st->map, reg, __raw);
@@ -643,6 +641,8 @@ static int ltc4283_write_in_byte(const struct ltc4283_hwmon *st,
 
 	val = clamp_val(val, 0, fs);
 	__raw = DIV_ROUND_CLOSEST(val * BIT(8), fs);
+	if (__raw == BIT(8))
+		__raw = U8_MAX;
 
 	return regmap_write(st->map, reg, __raw);
 }
@@ -762,9 +762,12 @@ static int ltc4283_write_curr_byte(const struct ltc4283_hwmon *st,
 				   u32 reg, long val)
 {
 	u32 temp = LTC4283_ADC1_FS_uV * DECA * MILLI;
-	u32 reg_val;
+	u32 reg_val, isense_max;
 
+	isense_max = DIV_ROUND_CLOSEST(st->vsense_max * MICRO * DECA, st->rsense);
+	clamp_val(val, 0, isense_max);
 	reg_val = DIV_ROUND_CLOSEST_ULL(val * BIT_ULL(8) * st->rsense, temp);
+
 	return regmap_write(st->map, reg, reg_val);
 }
 
@@ -772,7 +775,8 @@ static int ltc4283_write_curr_history(struct ltc4283_hwmon *st)
 {
 	int ret;
 
-	ret = ltc4283_write_in_history(st, LTC4283_SENSE_MIN, st->vsense_max,
+	ret = ltc4283_write_in_history(st, LTC4283_SENSE_MIN,
+				       st->vsense_max * MILLI,
 				       LTC4283_ADC1_FS_uV);
 	if (ret)
 		return ret;
@@ -1240,8 +1244,11 @@ static int ltc4283_setup(struct ltc4283_hwmon *st, struct device *dev)
 	if (ret)
 		return ret;
 
-	/* default to 1 micro ohm so we can probe without FW properties */
-	st->rsense = 1 * MICRO;
+	/*
+	 * Default to 1 micro ohm so we can probe without FW properties. Note
+	 * the below division expects rsense in nano ohms.
+	 */
+	st->rsense = 1 * MILLI;
 	ret = device_property_read_u32(dev, "adi,rsense-nano-ohms",
 				       &st->rsense);
 	if (!ret) {
